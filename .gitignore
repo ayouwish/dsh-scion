@@ -1,0 +1,12 @@
+# Build output — produced by `prepare`/`prepack` (`tsc -p tsconfig.json`)
+lib/
+dist/
+*.tgz
+
+# Dependencies
+node_modules/
+
+# Logs and OS noise
+*.log
+.DS_Store
+Thumbs.db

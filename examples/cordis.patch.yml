@@ -1,0 +1,22 @@
+# Mounting dsh-scion into a DSH profile.
+#
+# Copy the block below into ~/.dsh/profiles/<name>/cordis.patch.yml and restart
+# `dsh web`. A bare `- id: scion` entry is an id-targeted patch for an existing
+# row and is rejected with `patch: entry "scion" not found`; a new row must use
+# `insert:`.
+#
+# Install the package into the profile first, with the pnpm major that
+# installed it (a store-version mismatch fails with ERR_PNPM_UNEXPECTED_STORE):
+#
+#   cd ~/.dsh/profiles/web
+#   npx --yes pnpm@10.33.2 add "file:/path/to/dsh-plugins/dsh-scion"
+
+- insert:
+    - id: scion
+      name: '@asyouwish/dsh-scion'
+      config:
+        # Disable to load the plugin inert (no gate, no /scion command).
+        enabled: true
+        # Install the agent/pre-step veto for imported sessions. The
+        # filesystem and ownership layers stay active either way.
+        readonlyGate: true

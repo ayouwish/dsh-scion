@@ -1,0 +1,62 @@
+{
+  "name": "@asyouwish/dsh-scion",
+  "description": "Scion: portable workspace+session units carried by git. Export selected local sessions into a git repo, import foreign ones read-only, and continue by forking.",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib"
+  ],
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ayouwish/dsh-scion.git"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepare": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "verify": "pnpm build && pnpm test"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-agent": "^0.2.1-alpha.1",
+    "@deepseek-ai/dsh-commands": "^0.2.1-alpha.1",
+    "@deepseek-ai/dsh-home-paths": "^0.2.1-alpha.1",
+    "@deepseek-ai/dsh-session": "^0.2.1-alpha.1",
+    "@deepseek-ai/dsh-session-persistence": "^0.2.1-alpha.1",
+    "@deepseek-ai/dsh-workspace": "^0.2.1-alpha.1"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.1"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.5-alpha.1",
+    "@deepseek-ai/cordis-plugin-include": "^1.0.6",
+    "@deepseek-ai/cordis-plugin-loader": "^1.0.2",
+    "@deepseek-ai/dsh-agent": "^0.2.1-alpha.1",
+    "@deepseek-ai/dsh-commands": "^0.2.1-alpha.1",
+    "@deepseek-ai/dsh-home-paths": "^0.2.1-alpha.1",
+    "@deepseek-ai/dsh-session": "^0.2.1-alpha.1",
+    "@deepseek-ai/dsh-session-persistence": "^0.2.1-alpha.1",
+    "@deepseek-ai/dsh-session-persistence-jsonl": "^0.2.1-alpha.1",
+    "@deepseek-ai/dsh-session-query-sqlite": "^0.2.1-alpha.1",
+    "@deepseek-ai/dsh-workspace": "^0.2.1-alpha.1",
+    "@deepseek-ai/schemastery": "^3.18.1",
+    "@types/node": "^22.20.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.8"
+  }
+}
