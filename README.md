@@ -130,28 +130,71 @@ evaluated and deliberately not adopted.
 
 ## Install
 
+dsh-scion is a **bundle**: installing the package *is* the mount step.
+`dsh plugin` appends it to the profile's `dsh.profile.bundles`, and the
+package's own `cordis.patch.yml` inserts the `/scion` row — no hand-written
+profile entry.
+
 ```sh
-# 1. Install into the profile. Use the pnpm major that installed the profile:
-#    `dsh plugin add` forwards to whatever pnpm is on PATH, and a store-version
-#    mismatch fails with ERR_PNPM_UNEXPECTED_STORE.
-cd ~/.dsh/profiles/web
-npx --yes pnpm@10.33.2 add "file:/path/to/dsh-plugins/dsh-scion"
+# Published package, packaged DSH app:
+dsh plugin --profile web add @asyouwish/dsh-scion@0.3.0
+# From a source checkout, reach the same launcher through its script:
+cd /path/to/deepseek-harness
+pnpm dsh plugin --profile web add @asyouwish/dsh-scion@0.3.0
+# Add --registry=https://registry.npmjs.org/ when your default registry is a
+# mirror that may lag behind a just-published version.
 
-# 2. Mount it. A plain (non-bundle) plugin needs an explicit insert row; see
-#    examples/cordis.patch.yml:
-#      ~/.dsh/profiles/web/cordis.patch.yml
-#      - insert:
-#          - id: scion
-#            name: '@asyouwish/dsh-scion'
-#            config:
-#              enabled: true
+# To develop against a local checkout instead:
+#   dsh plugin --profile web add "file:/path/to/dsh-plugins/dsh-scion"
+# A `file:` directory dependency is *hard-linked*, so rebuilding the repo
+# rewrites the installed plugin in place and a file added later (lib/prune.js)
+# stays invisible until the install is re-run. For an independent copy, pack a
+# tarball first:
+#   pnpm pack && dsh plugin --profile web add /path/to/asyouwish-dsh-scion-0.3.0.tgz
 
-# 3. Restart `dsh web`. dsh-hmr ignores **/node_modules, so plugin *code*
-#    changes are not hot-reloaded; only the profile patch file is watched.
+# Then restart `dsh web`. dsh-hmr ignores **/node_modules, so plugin *code*
+# changes are not hot-reloaded.
 ```
 
-Verify with `/scion status`: it prints `branch`, `remote`, `upstream`, and
-`worktree` lines.
+Override the bundle's configuration with an id-targeted row in the profile's own
+patch (that layer is applied after every bundle layer, so the bundle still owns
+the row — never repeat it with `insert:`, which would mount the plugin twice):
+
+```yaml
+# ~/.dsh/profiles/web/cordis.patch.yml
+- id: scion
+  config:
+    enabled: true
+    readonlyGate: true
+```
+
+**Upgrading from 0.2.0**, which was mounted by a hand-written row: `dsh plugin`
+only activates a *newly added* dependency, so re-install rather than upgrade in
+place, and delete the old `insert:` row at the same time:
+
+```sh
+dsh plugin --profile web remove @asyouwish/dsh-scion
+dsh plugin --profile web add @asyouwish/dsh-scion@0.3.0
+```
+
+`dsh plugin` reports success even when it merely reinstalled the package, and a
+`remove` can exit non-zero transiently (retry it). Either way, check afterwards
+that `dsh.profile.bundles` in the profile's `package.json` gained
+`@asyouwish/dsh-scion` — that list entry, not the dependency, is what mounts the
+plugin. Without it the install succeeds and `/scion` stays absent.
+
+**One pnpm per profile.** `dsh plugin` forwards to a pnpm: the one on `PATH` for
+a source checkout, an installation-bundled one for the packaged apps. A profile's
+`node_modules` belongs to the store of whichever pnpm last wrote it —
+`~/.dsh/profiles/web/node_modules/.modules.yaml` records `packageManager` and
+`storeDir`, and pnpm 10/11 use `store/v10`/`store/v11`. Point a different major
+at it and pnpm wants to purge and rebuild `node_modules` (non-interactively that
+aborts as `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`). Read the recorded major
+and keep using it; to move a profile onto another major, run one install with the
+target pnpm and `--config.confirmModulesPurge=false`.
+
+Verify with `/scion status`: it prints `branch`, `remote`, `upstream`,
+`worktree`, plus the `local` (exportable) and `all` (cwd-matching) counts.
 
 ## Known limitations
 
@@ -174,7 +217,7 @@ Verify with `/scion status`: it prints `branch`, `remote`, `upstream`, and
 ```sh
 pnpm install
 pnpm build      # tsc → lib/
-pnpm test       # 26 tests
+pnpm test       # 28 tests
 pnpm verify     # build + test
 ```
 
@@ -192,14 +235,16 @@ Tests come in three tiers:
   fallback applies when no workspace record is usable, prune drops exactly the
   complement, unmanaged files are left alone, and a clone with no local
   sessions prunes nothing.
-- `tests/loader-composition.spec.ts` — mounting through the real cordis Loader,
-  `/scion` registration, and inertness when disabled.
+- `tests/loader-composition.spec.ts` — mounting through the real cordis Loader:
+  the shipped `dsh.bundle` patch layer alone mounts `/scion`, a profile layer
+  overrides it, and a bad config stays inert.
 - `tests/git.spec.ts` — repository state and the first-push upstream flow.
 
 ## Modules
 
 | File | Responsibility |
 |---|---|
+| `cordis.patch.yml` | The bundle layer: inserts the `/scion` row into every profile that lists this package |
 | `src/index.ts` | Plugin entry: config validation, read-only gate, `/scion` registration |
 | `src/service.ts` | Command executor (root resolved from the session cwd) |
 | `src/commands.ts` | `/scion` argument grammar (pure, unit-tested) |

@@ -106,28 +106,64 @@ session。
 
 ## 安装
 
+dsh-scion 是一个 **bundle**：装上就等于挂好。`dsh plugin` 会把它加进 profile 的
+`dsh.profile.bundles`，再由包自带的 `cordis.patch.yml` 插入 `/scion` 那一行 ——
+不需要手写任何 profile 条目。
+
 ```sh
-# 1. 装进 profile。必须用「当初装这个 profile 的那个 pnpm 大版本」：
-#    `dsh plugin add` 会转发给 PATH 上的 pnpm，store 版本不匹配会报
-#    ERR_PNPM_UNEXPECTED_STORE。
-cd ~/.dsh/profiles/web
-npx --yes pnpm@10.33.2 add "file:/path/to/dsh-plugins/dsh-scion"
+# 发布版（打包的 DSH 应用）：
+dsh plugin --profile web add @asyouwish/dsh-scion@0.3.0
+# 源码 checkout：通过它的 npm 脚本进入同一个启动器：
+cd /path/to/deepseek-harness
+pnpm dsh plugin --profile web add @asyouwish/dsh-scion@0.3.0
+# 你的默认 registry 若是镜像、可能晚于刚发布的版本，就加
+# --registry=https://registry.npmjs.org/
 
-# 2. 在 profile 的 patch 层加一行（本插件不是 bundle，需要显式挂载）。
-#    裸 `- id: scion` 是「改已存在的行」，会被拒为
-#    `patch: entry "scion" not found`；新增行必须用 insert:。
-#    ~/.dsh/profiles/web/cordis.patch.yml
-#    - insert:
-#        - id: scion
-#          name: '@asyouwish/dsh-scion'
-#          config:
-#            enabled: true
+# 想直接用本地 checkout 开发：
+#   dsh plugin --profile web add "file:/path/to/dsh-plugins/dsh-scion"
+# 注意 `file:` 目录依赖是「硬链接」：重建仓库会就地改写已安装的插件，后新增的文件
+# （如 lib/prune.js）在重跑安装前不会出现。要独立副本就先打包：
+#   pnpm pack && dsh plugin --profile web add /path/to/asyouwish-dsh-scion-0.3.0.tgz
 
-# 3. 重启 dsh web。dsh-hmr 忽略 **/node_modules，所以插件「代码」更新不会热重载，
-#    只有 profile 的 patch 文件会被监听。
+# 之后重启 dsh web。dsh-hmr 忽略 **/node_modules，插件「代码」不会热重载。
 ```
 
-> 验证：`/scion status` 会打印 `branch` / `remote` / `upstream` / `worktree` 四行。
+要改 bundle 的配置，就在 profile 自己的 patch 里写一条 id 定向行（该层在所有 bundle
+层之后应用，行仍归 bundle 所有；**不要**再用 `insert:` 重复一遍，那会挂载两次）：
+
+```yaml
+# ~/.dsh/profiles/web/cordis.patch.yml
+- id: scion
+  config:
+    enabled: true
+    readonlyGate: true
+```
+
+**从 0.2.0 升级**（那一版靠手写 `insert:` 行挂载）：`dsh plugin` 只激活「新增的依赖」，
+所以别原地升级，而是先删再装，同时删掉旧的 `insert:` 行：
+
+```sh
+dsh plugin --profile web remove @asyouwish/dsh-scion
+dsh plugin --profile web add @asyouwish/dsh-scion@0.3.0
+```
+
+`dsh plugin` 即使只是重装了一遍包也会报成功，`remove` 也可能偶发非零退出（重试即可）。
+两条路走完都要确认 profile `package.json` 的 `dsh.profile.bundles` 里多出了
+`@asyouwish/dsh-scion` —— 挂载靠的是这个列表项，不是 dependencies；少一项就会
+「装上了但 `/scion` 不存在」。
+
+**一个 profile 只用一个 pnpm 大版本。** `dsh plugin` 最终会转发给某个 pnpm：源码
+checkout 用 `PATH` 上的那个，打包应用用安装自带的那个。profile 的 `node_modules`
+属于「最后一次写它的 pnpm」的 store ——
+`~/.dsh/profiles/web/node_modules/.modules.yaml` 里的 `packageManager` / `storeDir`
+就是证据，而 pnpm 10/11 分别用 `store/v10` / `store/v11`。拿另一个大版本指向它会触发
+purge 重建 `node_modules`（非交互时直接以
+`ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY` 中止）。先读 `.modules.yaml` 里记的版本，
+然后一直用它；要把 profile 换到另一个大版本，就用目标 pnpm 跑一次带
+`--config.confirmModulesPurge=false` 的安装。
+
+> 验证：`/scion status` 会打印 `branch` / `remote` / `upstream` / `worktree`，
+> 以及 `local`（可导出）与 `all`（cwd 匹配）两个计数。
 > 完整示例见 [examples/cordis.patch.yml](examples/cordis.patch.yml)。
 
 ## 限制（已知，未做）
@@ -148,7 +184,7 @@ npx --yes pnpm@10.33.2 add "file:/path/to/dsh-plugins/dsh-scion"
 ```sh
 pnpm install
 pnpm build      # tsc → lib/
-pnpm test       # 26 个测试
+pnpm test       # 28 个测试
 pnpm verify     # build + test
 ```
 
@@ -160,12 +196,14 @@ pnpm verify     # build + test
 - `tests/export-scope.spec.ts` —— 对真实后端校验导出归属与 prune：默认只导出 workspace 记录 account 里的 id，
   显式 `--sessions` 仍可选中 subagent 子会话，没有可用 workspace 记录时回退到 cwd 相等；prune 恰好删掉补集，
   不碰 unmanaged 文件，且本机没有本地 session 的 clone 不会误删
-- `tests/loader-composition.spec.ts` —— 经真实 cordis Loader 挂载、`/scion` 注册、配置错误不激活
+- `tests/loader-composition.spec.ts` —— 经真实 cordis Loader 挂载：仅凭包内的 `dsh.bundle`
+  补丁层就能挂上 `/scion`，profile 自己的层可覆盖它，坏 config 不激活
 
 ## 模块
 
 | 文件 | 职责 |
 |---|---|
+| `cordis.patch.yml` | bundle 层：向所有列出本包的 profile 插入 `/scion` 行 |
 | `src/index.ts` | 插件入口：Config 校验、只读闸门、`/scion` 注册 |
 | `src/service.ts` | 命令执行器（根从 session cwd 解析） |
 | `src/commands.ts` | `/scion` 参数语法（纯函数，可单测） |

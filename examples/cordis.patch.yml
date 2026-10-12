@@ -1,27 +1,21 @@
-# Mounting dsh-scion into a DSH profile.
+# Overriding dsh-scion's configuration in a DSH profile.
 #
-# Copy the block below into ~/.dsh/profiles/<name>/cordis.patch.yml and restart
-# `dsh web`. A bare `- id: scion` entry is an id-targeted patch for an existing
-# row and is rejected with `patch: entry "scion" not found`; a new row must use
-# `insert:`.
+# dsh-scion is a *bundle*: `dsh plugin add @asyouwish/dsh-scion` appends it to
+# the profile's `dsh.profile.bundles`, and the package's own cordis.patch.yml
+# inserts the plugin row. Mounting is therefore automatic — nothing has to be
+# copied into a profile by hand.
 #
-# Install the package into the profile first:
+# A profile applies its own cordis.patch.yml *after* every bundle layer, so a
+# bare id-targeted row like the one below overrides the bundle's config while
+# the bundle still owns the row itself. (An `insert:` row with the same id
+# would mount the plugin a second time — never do that once the bundle is
+# installed.)
 #
-#   dsh plugin --profile web add @asyouwish/dsh-scion@0.2.0
-#
-# A source checkout reaches the same launcher through its script
-# (`pnpm dsh plugin --profile web add ...`) and forwards to the pnpm on PATH,
-# while a packaged app injects its own. Keep the profile on the pnpm major that
-# last wrote it — node_modules/.modules.yaml records `packageManager`/`storeDir`,
-# and mixing majors (pnpm 10 and 11 use store/v10 and store/v11) makes pnpm
-# purge and rebuild node_modules instead.
-
-- insert:
-    - id: scion
-      name: '@asyouwish/dsh-scion'
-      config:
-        # Disable to load the plugin inert (no gate, no /scion command).
-        enabled: true
-        # Install the agent/pre-step veto for imported sessions. The
-        # filesystem and ownership layers stay active either way.
-        readonlyGate: true
+# ~/.dsh/profiles/web/cordis.patch.yml
+- id: scion
+  config:
+    # Disable to load the plugin inert (no gate, no /scion command).
+    enabled: true
+    # Install the agent/pre-step veto for imported sessions. The filesystem
+    # and ownership layers stay active either way.
+    readonlyGate: true

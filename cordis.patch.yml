@@ -1,0 +1,17 @@
+# The configuration layer dsh-scion contributes to any profile that lists it in
+# `dsh.profile.bundles`. `dsh plugin add @asyouwish/dsh-scion` appends it there
+# automatically because package.json declares `dsh.bundle`, so installing the
+# package is the whole mount step — no hand-written profile row is required.
+#
+# A profile's own cordis.patch.yml is applied *after* every bundle layer, so an
+# id-targeted `- id: scion` row (see examples/cordis.patch.yml) overrides the
+# config below without restating the plugin.
+- insert:
+    - id: scion
+      name: '@asyouwish/dsh-scion'
+      config:
+        # Disable to load the plugin inert (no gate, no /scion command).
+        enabled: true
+        # Install the agent/pre-step veto for imported sessions. The
+        # filesystem and ownership layers stay active either way.
+        readonlyGate: true
