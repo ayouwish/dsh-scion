@@ -13,6 +13,7 @@ export type ScionCommand =
   | { readonly kind: 'init'; readonly name: string | undefined }
   | { readonly kind: 'push'; readonly sessionIds: readonly string[] | undefined; readonly push: boolean }
   | { readonly kind: 'pull'; readonly sessionIds: readonly string[] | undefined; readonly git: boolean }
+  | { readonly kind: 'prune'; readonly sessionIds: readonly string[] | undefined; readonly dryRun: boolean }
   | { readonly kind: 'forget'; readonly sessionId: string }
   | { readonly kind: 'help' }
   | { readonly kind: 'error'; readonly message: string }
@@ -25,6 +26,7 @@ export const SCION_USAGE = [
   '/scion init [name]                initialize the current directory as a scion',
   '/scion push [--sessions a,b] [--push]   export local sessions into the repo (commit; --push also pushes)',
   '/scion pull [--sessions a,b] [--no-git]  git pull, then import repo sessions read-only',
+  '/scion prune [--sessions a,b] [--dry-run]  drop exported sessions the workspace no longer owns',
   '/scion forget <session-id>        drop the read-only ownership record (files are left alone)',
 ].join('\n')
 
@@ -57,6 +59,11 @@ export function parseScionCommand(rawInput: string): ScionCommand {
       const selection = parseSelection(rest, ['--sessions', '--no-git'])
       if ('message' in selection) return { kind: 'error', message: selection.message }
       return { kind: 'pull', sessionIds: selection.sessionIds, git: !selection.flags.has('--no-git') }
+    }
+    case 'prune': {
+      const selection = parseSelection(rest, ['--sessions', '--dry-run'])
+      if ('message' in selection) return { kind: 'error', message: selection.message }
+      return { kind: 'prune', sessionIds: selection.sessionIds, dryRun: selection.flags.has('--dry-run') }
     }
     case 'forget': {
       if (rest.length !== 1) return { kind: 'error', message: 'usage: /scion forget <session-id>' }

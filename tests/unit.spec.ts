@@ -37,12 +37,17 @@ describe('command grammar', () => {
     expect(parseScionCommand('push --push')).toEqual({ kind: 'push', sessionIds: undefined, push: true })
     expect(parseScionCommand('pull')).toEqual({ kind: 'pull', sessionIds: undefined, git: true })
     expect(parseScionCommand('pull --no-git')).toEqual({ kind: 'pull', sessionIds: undefined, git: false })
+    expect(parseScionCommand('prune')).toEqual({ kind: 'prune', sessionIds: undefined, dryRun: false })
+    expect(parseScionCommand('prune --dry-run')).toEqual({ kind: 'prune', sessionIds: undefined, dryRun: true })
     expect(parseScionCommand('forget session-a')).toEqual({ kind: 'forget', sessionId: 'session-a' })
   })
 
   it('parses a comma-separated session selection', () => {
     expect(parseScionCommand('push --sessions a,b,c')).toEqual({
       kind: 'push', sessionIds: ['a', 'b', 'c'], push: false,
+    })
+    expect(parseScionCommand('prune --sessions a,b --dry-run')).toEqual({
+      kind: 'prune', sessionIds: ['a', 'b'], dryRun: true,
     })
     // The list is one token: spaces around commas are not part of the grammar.
     expect(parseScionCommand('push --sessions a, b')).toMatchObject({ kind: 'error' })
@@ -52,6 +57,7 @@ describe('command grammar', () => {
     expect(parseScionCommand('nope')).toMatchObject({ kind: 'error' })
     expect(parseScionCommand('push --wat')).toMatchObject({ kind: 'error' })
     expect(parseScionCommand('push --sessions')).toMatchObject({ kind: 'error' })
+    expect(parseScionCommand('prune --push')).toMatchObject({ kind: 'error' })
     expect(parseScionCommand('status extra')).toMatchObject({ kind: 'error' })
     expect(parseScionCommand('forget')).toMatchObject({ kind: 'error' })
   })

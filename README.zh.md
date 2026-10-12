@@ -33,6 +33,7 @@ session 日志是**追加式、自描述**的记录：`seq` 从 0 稠密连续�
 /scion init [name]                       把当前目录初始化成 scion（必要时 git init）
 /scion push [--sessions a,b] [--push]    导出本地 session 并 commit（--push 顺带发布）
 /scion pull [--sessions a,b] [--no-git]  git pull，然后把仓库里的 session 只读导入
+/scion prune [--sessions a,b] [--dry-run]  删掉 workspace 已不再拥有的已导出 session
 /scion forget <session-id>               删掉只读归属记录（文件保留）
 ```
 
@@ -55,15 +56,26 @@ git remote add origin git@your-host:you/demo-scion.git   # 或 user@server:~/sci
 
 ### 选择导出哪些 session
 
-`/scion push` 不带参数会导出**该 workspace 的全部本地 session**，明文 JSONL 体积可能很大
-（实测一个 147 session 的 workspace ≈ 394 MB）。只想要一部分就显式选择：
+`/scion push` 不带参数导出的是 **DSH 记在该 workspace 名下的 session**：workspace 记录
+account 里的 id，且其 header 的 cwd 等于该目录——和侧边栏分组用的是同一条两条件规则。
+子 agent（subagent）子会话、以及从未挂载到该 workspace 的会话，默认**不导出**。
+这点很重要，因为明文 JSONL 很大（实测一个 147 session 的目录 ≈ 394 MB，其中只有 32 个
+是 workspace 成员）：
 
 ```
 /scion push --sessions <id1>,<id2> --push
 ```
 
-已导出的文件不会被自动删除；要瘦身需手动 `rm .dsh/sessions/<id>.jsonl` 后重新 commit
-（目前没有 `drop` 子命令，见「限制」）。
+显式选择会按「canonical cwd 等于该 root 的全部本地 session」校验，所以 subagent 子会话
+**可以**按需导出。若宿主机没有 workspace registry，或该目录还没有任何记录，则回退到
+整个 cwd 匹配集合。`/scion status` 会同时打印两个数字（`local` = 可导出，`all` = cwd 匹配）。
+
+已导出的文件不会被自动删除；`/scion prune` 是 push 的显式逆操作。它会删掉 workspace
+已不再拥有的 session（即默认导出范围的补集）、移除对应 manifest 记录并 commit；
+`/scion prune --dry-run` 只报告同一份计划、不删任何东西。prune 只处理 manifest 里有记录的
+session——没有记录的 `.jsonl` 只报为 *unmanaged*、绝不触碰；全新 clone 且本机没有本地
+session 时也不会误删。`--sessions <id>` 则按精确选择删除，也用于删掉本地 log 已消失的
+session。
 
 ## 仓库布局
 
@@ -121,7 +133,10 @@ npx --yes pnpm@10.33.2 add "file:/path/to/dsh-plugins/dsh-scion"
 ## 限制（已知，未做）
 
 - **不搬运附件**：session 里的图片/文件是内容寻址引用，目前不会随仓库搬运。
-- **没有 `drop` 子命令**：已导出的 session 文件不会自动删除或瘦身，需要手动 `rm` + commit。
+- **没有 `drop` 子命令**：`/scion prune` 是 push 的显式逆操作，但 prune 永不自动发生——
+  单独 export 不会删除任何文件。
+- **subagent 子会话默认不导出**：它们不属于 workspace 记录；要带走需显式
+  `/scion push --sessions <id>`。
 - **跨版本拒绝**：仓库里的 session format 版本与本地 writer 不一致时拒绝导入（迁移链只前进不降级）。
 - **`cwd` 之外的耦合**：导入后建议重启一次 dsh，让 workspace 的 canonical 索引重建；
   正常流程下 `attachSession` 会触发懒加载重索引，但「cwd 目录当时还不存在」这类陈旧缓存需要重启。
@@ -133,7 +148,7 @@ npx --yes pnpm@10.33.2 add "file:/path/to/dsh-plugins/dsh-scion"
 ```sh
 pnpm install
 pnpm build      # tsc → lib/
-pnpm test       # 17 个测试
+pnpm test       # 26 个测试
 pnpm verify     # build + test
 ```
 
@@ -142,6 +157,9 @@ pnpm verify     # build + test
 - `tests/unit.spec.ts` —— 命令语法、仓库信封、manifest、归属索引、目录名镜像（纯逻辑）
 - `tests/closed-loop.spec.ts` —— **对真实 JSONL 后端**跑完整闭环：A 导出 → B 在不同绝对路径导入 →
   只读（校验目录与文件权限位）→ 幂等重导 → A 继续写 → B 追加 → 写打开被拒；外加本地 id 冲突与版本闸门
+- `tests/export-scope.spec.ts` —— 对真实后端校验导出归属与 prune：默认只导出 workspace 记录 account 里的 id，
+  显式 `--sessions` 仍可选中 subagent 子会话，没有可用 workspace 记录时回退到 cwd 相等；prune 恰好删掉补集，
+  不碰 unmanaged 文件，且本机没有本地 session 的 clone 不会误删
 - `tests/loader-composition.spec.ts` —— 经真实 cordis Loader 挂载、`/scion` 注册、配置错误不激活
 
 ## 模块
@@ -151,7 +169,8 @@ pnpm verify     # build + test
 | `src/index.ts` | 插件入口：Config 校验、只读闸门、`/scion` 注册 |
 | `src/service.ts` | 命令执行器（根从 session cwd 解析） |
 | `src/commands.ts` | `/scion` 参数语法（纯函数，可单测） |
-| `src/export.ts` | push：本地 session → 仓库明文信封 |
+| `src/export.ts` | push：workspace 名下的本地 session → 仓库明文信封 |
+| `src/prune.ts` | prune：删掉 workspace 已不再拥有的仓库 session |
 | `src/import.ts` | pull：仓库 → 只读本地 session（cwd 本地化、归属记录、权限位） |
 | `src/readonly.ts` | `agent/pre-step` 闸门 |
 | `src/ownership.ts` | 本机归属索引（串行化写入 + 原子替换） |

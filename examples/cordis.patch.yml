@@ -5,11 +5,16 @@
 # row and is rejected with `patch: entry "scion" not found`; a new row must use
 # `insert:`.
 #
-# Install the package into the profile first, with the pnpm major that
-# installed it (a store-version mismatch fails with ERR_PNPM_UNEXPECTED_STORE):
+# Install the package into the profile first:
 #
-#   cd ~/.dsh/profiles/web
-#   npx --yes pnpm@10.33.2 add "file:/path/to/dsh-plugins/dsh-scion"
+#   dsh plugin --profile web add @asyouwish/dsh-scion@0.2.0
+#
+# A source checkout reaches the same launcher through its script
+# (`pnpm dsh plugin --profile web add ...`) and forwards to the pnpm on PATH,
+# while a packaged app injects its own. Keep the profile on the pnpm major that
+# last wrote it — node_modules/.modules.yaml records `packageManager`/`storeDir`,
+# and mixing majors (pnpm 10 and 11 use store/v10 and store/v11) makes pnpm
+# purge and rebuild node_modules instead.
 
 - insert:
     - id: scion

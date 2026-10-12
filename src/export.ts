@@ -5,11 +5,19 @@
  * sessions are skipped, because the repo already carries a byte-faithful copy
  * of them and rewriting that copy is exactly what the read-only rule prevents.
  *
+ * Membership follows DSH's own workspace rule, not bare directory equality: a
+ * session belongs to the workspace registered for `root` only when it is on
+ * that record's account **and** its header's canonical cwd equals `root` —
+ * exactly what `Workspace.sessionIds` projects. Bare cwd equality would also
+ * sweep in subagent child sessions and sessions the workspace never attached,
+ * which DSH itself does not group under the workspace.
+ *
  * @module @asyouwish/dsh-scion/export
  */
 
 import { sep } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
+import type { Workspace } from '@deepseek-ai/dsh-workspace'
 import type {} from '@deepseek-ai/dsh-session-persistence'
 
 import { SESSION_FORMAT_VERSION } from '@deepseek-ai/dsh-session'
@@ -25,7 +33,7 @@ import { canonicalizeOrSelf, ensureDir, writeTextAtomic } from './fs-util.ts'
 export interface ScionExportOptions {
   /** Scion root (the git repo). */
   readonly root: string
-  /** Explicit session selection; omitted exports every local-owned session of this root. */
+  /** Explicit session selection; omitted exports every workspace-owned local session of this root. */
   readonly sessionIds?: readonly string[]
   /** Machine-local ownership index. */
   readonly ownership: ScionOwnershipStore
@@ -50,8 +58,10 @@ export interface ScionExportResult {
 /**
  * List the local sessions that belong to a scion root and are owned here.
  *
- * Membership is the canonical-cwd equality DSH itself uses for workspaces;
- * imported sessions are excluded so a replica never re-exports foreign work.
+ * The candidate set is every stored session this machine owns whose canonical
+ * cwd is the root; it is then narrowed to the sessions DSH accounts to the
+ * workspace registered for that path. See {@link scopeToWorkspace} for the
+ * fallback used when no workspace record is available.
  *
  * @param ctx - host context.
  * @param root - canonical scion root.
@@ -59,6 +69,27 @@ export interface ScionExportResult {
  * @returns headers of exportable local sessions.
  */
 export async function listLocalSessions(
+  ctx: Context,
+  root: string,
+  ownership: ScionOwnershipStore,
+): Promise<SessionHeader[]> {
+  return await scopeToWorkspace(ctx, root, await listCandidateSessions(ctx, root, ownership))
+}
+
+/**
+ * List every stored session this machine owns whose canonical cwd is the root.
+ *
+ * This is the raw directory-scoped set — subagent child sessions and sessions
+ * DSH never grouped under the workspace included. An explicit selection may
+ * draw from it, so a session that is not a workspace member can still be
+ * exported on request.
+ *
+ * @param ctx - host context.
+ * @param root - canonical scion root.
+ * @param ownership - machine-local ownership index.
+ * @returns headers of cwd-matching local sessions, ordered by id.
+ */
+export async function listCandidateSessions(
   ctx: Context,
   root: string,
   ownership: ScionOwnershipStore,
@@ -79,6 +110,39 @@ export async function listLocalSessions(
 }
 
 /**
+ * Narrow cwd-matching candidates to the sessions DSH accounts to `root`.
+ *
+ * DSH membership is two conditions — an id on the workspace record's account
+ * and a header whose canonical cwd equals the workspace path — and
+ * `Workspace.sessionIds` already projects both. Candidates no workspace claims
+ * (subagent child sessions, never-attached sessions) are dropped.
+ *
+ * Falls back to every candidate when the host composes no workspace registry,
+ * when no workspace is registered for `root`, or when that record's account is
+ * empty: an empty account means DSH holds no ownership knowledge for this
+ * directory yet, not that the directory owns nothing, and exporting nothing
+ * would be the worse error.
+ *
+ * @param ctx - host context.
+ * @param root - canonical scion root.
+ * @param candidates - cwd-matching local sessions.
+ * @returns the workspace-owned subset, or every candidate on fallback.
+ */
+export async function scopeToWorkspace(
+  ctx: Context,
+  root: string,
+  candidates: readonly SessionHeader[],
+): Promise<SessionHeader[]> {
+  const registry = ctx.get('workspaceRegistry')
+  if (registry === undefined) return [...candidates]
+  const workspace: Workspace | undefined = await registry.resolveByPath(root)
+  if (workspace === undefined) return [...candidates]
+  const account = new Set(workspace.sessionIds.map(String))
+  if (account.size === 0) return [...candidates]
+  return candidates.filter(header => account.has(String(header.id)))
+}
+
+/**
  * Export sessions into the scion repo.
  * @param ctx - host context.
  * @param options - root, selection, ownership, and cancellation.
@@ -94,8 +158,9 @@ export async function exportSessions(
   if (manifest === undefined) {
     throw new Error(`not an initialized scion (no .dsh/scion.json): ${root}`)
   }
-  const local = await listLocalSessions(ctx, root, options.ownership)
-  const selected = selectSessions(local, options.sessionIds)
+  const candidates = await listCandidateSessions(ctx, root, options.ownership)
+  const local = await scopeToWorkspace(ctx, root, candidates)
+  const selected = selectSessions(local, candidates, options.sessionIds)
   await ensureDir(repoSessionsDir(root))
 
   let next: ScionManifest = manifest
@@ -145,18 +210,27 @@ export async function exportSessions(
 
 /**
  * Apply an explicit selection to the exportable set.
- * @param local - exportable local sessions.
+ *
+ * Without `sessionIds` the workspace-scoped default is exported. With them,
+ * any locally owned session whose canonical cwd is the root may be chosen —
+ * including a subagent child session the workspace record does not account —
+ * so an explicit request is honored rather than silently narrowed to
+ * workspace membership.
+ *
+ * @param local - workspace-scoped default export set.
+ * @param candidates - every cwd-matching locally owned session.
  * @param sessionIds - requested ids, when any.
  * @returns the sessions to export.
- * @throws when a requested id is not an exportable local session.
+ * @throws when a requested id is not a locally owned session of this root.
  */
 function selectSessions(
   local: readonly SessionHeader[],
+  candidates: readonly SessionHeader[],
   sessionIds: readonly string[] | undefined,
 ): readonly SessionHeader[] {
   if (sessionIds === undefined) return local
   const wanted = new Set(sessionIds)
-  const available = new Set(local.map(header => String(header.id)))
+  const available = new Set(candidates.map(header => String(header.id)))
   const missing = [...wanted].filter(id => !available.has(id))
   if (missing.length > 0) {
     throw new Error(
@@ -164,7 +238,7 @@ function selectSessions(
       + '(imported sessions are read-only and are never re-exported)',
     )
   }
-  return local.filter(header => wanted.has(String(header.id)))
+  return candidates.filter(header => wanted.has(String(header.id)))
 }
 
 /**

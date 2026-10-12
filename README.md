@@ -41,6 +41,7 @@ new session id elsewhere.
 /scion init [name]                       initialize the current directory as a scion (git init when needed)
 /scion push [--sessions a,b] [--push]    export local sessions and commit (--push also publishes)
 /scion pull [--sessions a,b] [--no-git]  git pull, then import repo sessions read-only
+/scion prune [--sessions a,b] [--dry-run]  drop exported sessions the workspace no longer owns
 /scion forget <session-id>               drop the read-only ownership record (files are left alone)
 ```
 
@@ -69,16 +70,32 @@ read-only copies.
 
 ### Choosing which sessions to export
 
-`/scion push` with no arguments exports **every local session of that
-workspace**, and plaintext JSONL can be large (a measured 147-session workspace
-was ≈ 394 MB). Select explicitly when you want less:
+`/scion push` with no arguments exports **the sessions DSH accounts to this
+workspace** — the ids on the workspace record for that directory whose header
+cwd is the root, the same two-condition membership the sidebar uses. Subagent
+child sessions and sessions the workspace never attached are **not** exported by
+default. That matters because plaintext JSONL is large (a measured 147-session
+directory was ≈ 394 MB, of which 32 were workspace members):
 
 ```
 /scion push --sessions <id1>,<id2> --push
 ```
 
-Already-exported files are not removed automatically; prune by hand with
-`rm .dsh/sessions/<id>.jsonl` and re-commit (there is no `drop` subcommand yet).
+An explicit selection is validated against every locally owned session whose
+canonical cwd is the root, so a subagent child session *can* be exported on
+request. On a host without a workspace registry, or before any record exists for
+the directory, export falls back to that whole cwd-matching set. `/scion status`
+prints both counts (`local` = exportable, `all` = cwd-matching).
+
+Already-exported files are not removed automatically; `/scion prune` is the
+explicit inverse. It deletes the sessions the workspace no longer owns (the
+complement of the default export scope), drops their manifest records, and
+commits; `/scion prune --dry-run` reports the same plan without deleting
+anything. Only manifest-recorded sessions are considered — a `.jsonl` file with
+no manifest record is reported as *unmanaged* and never touched — and a clone
+with no local sessions prunes nothing. `--sessions <id>` prunes an exact
+selection instead, which is also the way to drop a session whose local log is
+already gone.
 
 ## Repository layout
 
@@ -143,7 +160,10 @@ Verify with `/scion status`: it prints `branch`, `remote`, `upstream`, and
 - **Cross-version imports are refused**: a repo session whose format version
   differs from the local writer is rejected; the migration chain is
   forward-only.
-- **No `drop` subcommand**: exported files are never pruned automatically.
+- **No `drop` subcommand**: `/scion prune` is the explicit inverse of push, but
+  pruning is never automatic — export alone never deletes.
+- **Subagent child sessions are not exported by default**: they are not on the
+  workspace record; select one explicitly with `/scion push --sessions <id>`.
 - **No Web UI**: only the `/scion` command; the sidebar does not distinguish
   local from read-only imported sessions.
 - **Exports capture the current valid prefix**: exporting a running session
@@ -154,7 +174,7 @@ Verify with `/scion status`: it prints `branch`, `remote`, `upstream`, and
 ```sh
 pnpm install
 pnpm build      # tsc → lib/
-pnpm test       # 19 tests
+pnpm test       # 26 tests
 pnpm verify     # build + test
 ```
 
@@ -166,6 +186,12 @@ Tests come in three tiers:
   backend**: A exports → B imports at a different absolute path → read-only
   (asserted via mode bits) → idempotent re-import → A extends → B appends →
   write open refused; plus local-id collision and the version gate.
+- `tests/export-scope.spec.ts` — export membership and prune against the real
+  backend: the default set is the workspace record's account, an explicit
+  `--sessions` selection still reaches a subagent child, the cwd-equality
+  fallback applies when no workspace record is usable, prune drops exactly the
+  complement, unmanaged files are left alone, and a clone with no local
+  sessions prunes nothing.
 - `tests/loader-composition.spec.ts` — mounting through the real cordis Loader,
   `/scion` registration, and inertness when disabled.
 - `tests/git.spec.ts` — repository state and the first-push upstream flow.
@@ -177,7 +203,8 @@ Tests come in three tiers:
 | `src/index.ts` | Plugin entry: config validation, read-only gate, `/scion` registration |
 | `src/service.ts` | Command executor (root resolved from the session cwd) |
 | `src/commands.ts` | `/scion` argument grammar (pure, unit-tested) |
-| `src/export.ts` | push: local sessions → plaintext repo envelopes |
+| `src/export.ts` | push: workspace-owned local sessions → plaintext repo envelopes |
+| `src/prune.ts` | prune: drop repo sessions the workspace no longer owns |
 | `src/import.ts` | pull: repo → read-only local sessions (cwd localization, ownership, mode bits) |
 | `src/readonly.ts` | `agent/pre-step` gate |
 | `src/ownership.ts` | Machine-local ownership index (serialized writes, atomic replace) |

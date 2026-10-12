@@ -17,7 +17,8 @@ import type { ScionOwnershipStore } from './ownership.ts'
 import { SCION_USAGE, parseScionCommand } from './commands.ts'
 import type { ScionCommand } from './commands.ts'
 import { createManifest, readManifest, writeManifest } from './manifest.ts'
-import { exportSessions, listLocalSessions } from './export.ts'
+import { exportSessions, listCandidateSessions, listLocalSessions } from './export.ts'
+import { planPrune, pruneSessions } from './prune.ts'
 import { importSessions } from './import.ts'
 import { attachImported, ensureWorkspaceFor } from './workspace.ts'
 import { commitAll, currentBranch, headCommit, initRepo, isDirty, isGitWorkTree, push as gitPush, pull as gitPull, pushSettingUpstream, remoteNames, upstreamOf } from './git.ts'
@@ -75,6 +76,8 @@ export class ScionService {
         return await this.push(root, command.sessionIds, command.push)
       case 'pull':
         return await this.pull(root, command.sessionIds, command.git)
+      case 'prune':
+        return await this.prune(root, command.sessionIds, command.dryRun)
       case 'forget':
         return await this.forget(command.sessionId)
       default:
@@ -95,9 +98,10 @@ export class ScionService {
         'run `/scion init` to initialize this directory',
       ].join('\n'))
     }
-    const local = await listLocalSessions(this.ctx, root, this.ownership)
-    const imported = this.ownership.all().filter(record => record.localRoot === root)
     const workspace = await ensureWorkspaceFor(this.ctx, root)
+    const local = await listLocalSessions(this.ctx, root, this.ownership)
+    const candidates = await listCandidateSessions(this.ctx, root, this.ownership)
+    const imported = this.ownership.all().filter(record => record.localRoot === root)
     const head = await headCommit(root)
     const remotes = await remoteNames(root)
     const upstream = await upstreamOf(root)
@@ -114,7 +118,8 @@ export class ScionService {
       `  upstream  ${upstream ?? '(none — `/scion push --push` sets it on first publish)'}`,
       `  worktree  ${dirty ? 'dirty (uncommitted changes)' : 'clean'}`,
       `  workspace ${workspace === undefined ? '(no workspace registry)' : String(workspace.id)}`,
-      `  local     ${String(local.length)} session(s) owned here`,
+      `  local     ${String(local.length)} session(s) exportable (workspace-owned)`,
+      `  all       ${String(candidates.length)} session(s) with this cwd (subagent / unattached included)`,
       `  imported  ${String(imported.length)} read-only session(s)`,
     ]
     for (const header of local) lines.push(`    local     ${String(header.id)}`)
@@ -176,6 +181,14 @@ export class ScionService {
       lines.push(`  ${entry.id}  ${String(entry.eventCount)} events`)
     }
     for (const entry of result.skipped) lines.push(`  skipped ${entry.id}: ${entry.reason}`)
+    if (sessionIds === undefined) {
+      const candidates = await listCandidateSessions(this.ctx, root, this.ownership)
+      const omitted = candidates.length - result.exported.length - result.skipped.length
+      if (omitted > 0) {
+        lines.push(`scoped to this DSH workspace: ${String(omitted)} session(s) share this cwd but are not members`)
+        lines.push('  (subagent children / never attached; select one explicitly with `--sessions <id>`)')
+      }
+    }
     const commit = await commitAll(root, `scion: export ${String(result.exported.length)} session(s)`)
     lines.push(commit.summary)
     if (!alsoPush) {
@@ -250,6 +263,54 @@ export class ScionService {
       }
       lines.push('imported sessions are read-only; fork one to continue working')
     }
+    return success(lines.join('\n'))
+  }
+
+  /**
+   * Drop exported sessions the workspace no longer owns, then commit.
+   * @param root - canonical root.
+   * @param sessionIds - optional explicit selection.
+   * @param dryRun - whether to report the plan without deleting anything.
+   * @returns the prune result.
+   */
+  private async prune(
+    root: string,
+    sessionIds: readonly string[] | undefined,
+    dryRun: boolean,
+  ): Promise<CommandResult> {
+    const options = {
+      root,
+      ownership: this.ownership,
+      ...sessionIds === undefined ? {} : { sessionIds },
+    }
+    if (dryRun) {
+      const plan = await planPrune(this.ctx, options)
+      const lines = [
+        `dry run: ${String(plan.pruned.length)} session(s) would be pruned, `
+        + `${String(plan.kept)} kept in the repo`,
+      ]
+      for (const entry of plan.pruned) {
+        lines.push(`  ${entry.id}  ${String(entry.eventCount)} events  (${entry.reason})`)
+      }
+      for (const id of plan.unmanaged) lines.push(`  unmanaged, left alone: ${id}`)
+      lines.push(plan.pruned.length === 0
+        ? 'nothing to prune'
+        : 'run `/scion prune` without --dry-run to delete these files and commit')
+      return success(lines.join('\n'))
+    }
+
+    const plan = await pruneSessions(this.ctx, options)
+    const lines = [
+      `pruned ${String(plan.pruned.length)} session(s), ${String(plan.kept)} kept in the repo`,
+    ]
+    for (const entry of plan.pruned) {
+      lines.push(`  ${entry.id}  ${String(entry.eventCount)} events  (${entry.reason})`)
+    }
+    for (const id of plan.unmanaged) lines.push(`  unmanaged, left alone: ${id}`)
+    if (plan.pruned.length === 0) return success(lines.join('\n'))
+    const commit = await commitAll(root, `scion: prune ${String(plan.pruned.length)} session(s)`)
+    lines.push(commit.summary)
+    lines.push('run `git push` to publish the prune')
     return success(lines.join('\n'))
   }
 
