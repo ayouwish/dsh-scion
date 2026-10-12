@@ -138,13 +138,61 @@ export async function currentBranch(root: string): Promise<string | undefined> {
 }
 
 /**
- * Configured remote names, in configuration order.
+ * Configured remote names, in `git remote` order (alphabetical).
  * @param root - scion root.
  * @returns remote names; empty when none is configured.
  */
 export async function remoteNames(root: string): Promise<string[]> {
   const output = await git(root, ['remote'])
   return output.split('\n').map(line => line.trim()).filter(line => line.length > 0)
+}
+
+/**
+ * One remote's configured URL.
+ * @param root - scion root.
+ * @param name - remote name.
+ * @returns the URL, or `undefined` when the remote is absent.
+ */
+export async function remoteUrl(root: string, name: string): Promise<string | undefined> {
+  try {
+    const url = (await git(root, ['remote', 'get-url', name])).trim()
+    return url.length === 0 ? undefined : url
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Add a remote, or point an existing one at a new URL.
+ *
+ * This is the whole point of the command surface: a user hands scion a
+ * repository URL and never has to run `git remote add`/`set-url` by hand.
+ *
+ * @param root - scion root.
+ * @param name - remote name.
+ * @param url - repository URL.
+ * @returns whether the remote was created or updated.
+ */
+export async function setRemote(root: string, name: string, url: string): Promise<'added' | 'updated'> {
+  if ((await remoteNames(root)).includes(name)) {
+    await git(root, ['remote', 'set-url', name, url])
+    return 'updated'
+  }
+  await git(root, ['remote', 'add', name, url])
+  return 'added'
+}
+
+/**
+ * Hide credentials embedded in a repository URL for display.
+ *
+ * Only URL forms carry userinfo (`https://user:token@host/...`); scp-like
+ * spellings (`git@host:path`) are shown unchanged.
+ *
+ * @param url - repository URL.
+ * @returns the URL with any userinfo replaced by `***`.
+ */
+export function maskRemoteUrl(url: string): string {
+  return url.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/@]*@/iu, '$1***@')
 }
 
 /**

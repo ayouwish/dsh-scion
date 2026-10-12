@@ -30,7 +30,8 @@ session 日志是**追加式、自描述**的记录：`seq` 从 0 稠密连续�
 
 ```
 /scion status                            看这个 scion、本地 session、导入的只读 session
-/scion init [name]                       把当前目录初始化成 scion（必要时 git init）
+/scion init [name] [--remote <url>]      把当前目录初始化成 scion（必要时 git init）
+/scion remote [<url>]                    查看，或设置 origin 仓库地址
 /scion push [--sessions a,b] [--push]    导出本地 session 并 commit（--push 顺带发布）
 /scion pull [--sessions a,b] [--no-git]  git pull，然后把仓库里的 session 只读导入
 /scion prune [--sessions a,b] [--dry-run]  删掉 workspace 已不再拥有的已导出 session
@@ -39,17 +40,27 @@ session 日志是**追加式、自描述**的记录：`seq` 从 0 稠密连续�
 
 scion 根 = 发起命令的 session 的工作目录，所以命令总是作用于你正在说话的那个 checkout。
 
+`status` / `init` / `forget` 当场返回。`push` / `pull` / `prune` 是重活（实测一个 147 session
+的目录 ≈ 394 MB，外加 git），所以在有 job registry 的组合里它们会跑成**后台 job**：命令立刻
+返回 job id，逐 session 的进度与明细流进 job 的输出 ring，属主 session 可以 kill，完成时在会话
+内收到通知（需要时用 `job_output <id>` 读取）。没有 job registry（未组合 `dsh-jobs`，或没有
+controller 服务该 agent）时，同一份工作同步执行，输出就是命令文本。
+
 ### 首次发布：remote 与 upstream
 
-`/scion init` 只做 `git init` + 写 manifest，**不替你配 remote**（凭据是你的）。所以先配一次：
+仓库地址是交给 scion 的，不用碰命令行 `git`。初始化时给，或之后随时给：
 
-```sh
-cd <scion-root>
-git remote add origin git@your-host:you/demo-scion.git   # 或 user@server:~/scions/demo.git（裸仓库）
+```
+/scion init my-work --remote git@your-host:you/demo-scion.git
+/scion remote git@your-host:you/demo-scion.git     # 新增或更新 origin
+/scion remote                                      # 查看 remote 与 upstream
 ```
 
+git 接受的各种 URL 都行（`https://…`、`git@host:path`、`ssh://…`、本地路径）。带凭据的 URL
+会原样保存，但**显示时一律打码**（`https://***@host/…`）。
+
 之后 **`/scion push --push` 在没有 upstream 时会自动 `git push --set-upstream origin <branch>`**
-——首次发布不需要手动 `git push -u`。若根本没有 remote，它会明确告诉先 `git remote add`。
+——首次发布不需要手动 `git push -u`。若根本没有 remote，它会明确告诉先用 `/scion remote <url>`。
 
 `/scion pull` 用 `git pull --ff-only`：两边都改了 workspace 时它会失败并要求显式 merge。
 这是故意的——**只有 workspace 需要 merge**；session 文件永不冲突，因为导入的是只读副本。
@@ -112,10 +123,10 @@ dsh-scion 是一个 **bundle**：装上就等于挂好。`dsh plugin` 会把它�
 
 ```sh
 # 发布版（打包的 DSH 应用）：
-dsh plugin --profile web add @asyouwish/dsh-scion@0.3.0
+dsh plugin --profile web add @asyouwish/dsh-scion@0.4.0
 # 源码 checkout：通过它的 npm 脚本进入同一个启动器：
 cd /path/to/deepseek-harness
-pnpm dsh plugin --profile web add @asyouwish/dsh-scion@0.3.0
+pnpm dsh plugin --profile web add @asyouwish/dsh-scion@0.4.0
 # 你的默认 registry 若是镜像、可能晚于刚发布的版本，就加
 # --registry=https://registry.npmjs.org/
 
@@ -123,7 +134,7 @@ pnpm dsh plugin --profile web add @asyouwish/dsh-scion@0.3.0
 #   dsh plugin --profile web add "file:/path/to/dsh-plugins/dsh-scion"
 # 注意 `file:` 目录依赖是「硬链接」：重建仓库会就地改写已安装的插件，后新增的文件
 # （如 lib/prune.js）在重跑安装前不会出现。要独立副本就先打包：
-#   pnpm pack && dsh plugin --profile web add /path/to/asyouwish-dsh-scion-0.3.0.tgz
+#   pnpm pack && dsh plugin --profile web add /path/to/asyouwish-dsh-scion-0.4.0.tgz
 
 # 之后重启 dsh web。dsh-hmr 忽略 **/node_modules，插件「代码」不会热重载。
 ```
@@ -144,7 +155,7 @@ pnpm dsh plugin --profile web add @asyouwish/dsh-scion@0.3.0
 
 ```sh
 dsh plugin --profile web remove @asyouwish/dsh-scion
-dsh plugin --profile web add @asyouwish/dsh-scion@0.3.0
+dsh plugin --profile web add @asyouwish/dsh-scion@0.4.0
 ```
 
 `dsh plugin` 即使只是重装了一遍包也会报成功，`remove` 也可能偶发非零退出（重试即可）。
@@ -184,7 +195,7 @@ purge 重建 `node_modules`（非交互时直接以
 ```sh
 pnpm install
 pnpm build      # tsc → lib/
-pnpm test       # 28 个测试
+pnpm test       # 40 个测试
 pnpm verify     # build + test
 ```
 
@@ -198,6 +209,11 @@ pnpm verify     # build + test
   不碰 unmanaged 文件，且本机没有本地 session 的 clone 不会误删
 - `tests/loader-composition.spec.ts` —— 经真实 cordis Loader 挂载：仅凭包内的 `dsh.bundle`
   补丁层就能挂上 `/scion`，profile 自己的层可覆盖它，坏 config 不激活
+- `tests/jobs.spec.ts` —— 后台 job 适配（注册、流式输出、cancel 变 killed、失败结算、无 registry 回退）
+  与服务路由：有 registry 时 `push` 提交 job，没有时同步执行
+- `tests/git.spec.ts` —— 仓库状态、首次 push 的 upstream，以及 remote 新增/更新与凭据打码
+- `tests/remote.spec.ts` —— 仓库地址的命令面：`/scion init --remote` 一步到位、`/scion remote`
+  的新增/更新/查看，以及不在 git 工作区时的拒绝
 
 ## 模块
 
@@ -209,6 +225,7 @@ pnpm verify     # build + test
 | `src/commands.ts` | `/scion` 参数语法（纯函数，可单测） |
 | `src/export.ts` | push：workspace 名下的本地 session → 仓库明文信封 |
 | `src/prune.ts` | prune：删掉 workspace 已不再拥有的仓库 session |
+| `src/jobs.ts` | push/pull/prune 的后台 job 适配（可选 peer：`dsh-jobs`） |
 | `src/import.ts` | pull：仓库 → 只读本地 session（cwd 本地化、归属记录、权限位） |
 | `src/readonly.ts` | `agent/pre-step` 闸门 |
 | `src/ownership.ts` | 本机归属索引（串行化写入 + 原子替换） |
@@ -216,4 +233,4 @@ pnpm verify     # build + test
 | `src/repo-format.ts` | 仓库信封编解码（稠密 seq 校验） |
 | `src/locate.ts` | 镜像后端的目录命名并**验证**定位 |
 | `src/workspace.ts` | 本机 workspace 合成与 attach（兼作导入后自检） |
-| `src/git.ts` | `git` 子进程封装 |
+| `src/git.ts` | `git` 子进程封装，含 remote 配置（`/scion remote`） |

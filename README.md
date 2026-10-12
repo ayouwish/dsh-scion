@@ -38,7 +38,8 @@ new session id elsewhere.
 
 ```
 /scion status                            show the scion, branch/remote/upstream, local and imported sessions
-/scion init [name]                       initialize the current directory as a scion (git init when needed)
+/scion init [name] [--remote <url>]      initialize this directory as a scion (git init when needed)
+/scion remote [<url>]                    show, or set, the origin repository URL
 /scion push [--sessions a,b] [--push]    export local sessions and commit (--push also publishes)
 /scion pull [--sessions a,b] [--no-git]  git pull, then import repo sessions read-only
 /scion prune [--sessions a,b] [--dry-run]  drop exported sessions the workspace no longer owns
@@ -48,20 +49,34 @@ new session id elsewhere.
 The scion root is the invoking session's working directory, so a command always
 acts on the checkout you are talking from.
 
+`status`, `init`, and `forget` answer inline. `push`, `pull`, and `prune` do real
+work — a measured 147-session directory is ≈ 394 MB, plus git — so with a job
+registry composed they run as **background jobs**: the command answers
+immediately with a job id, per-session progress and detail stream into the job's
+output ring, the owning session can kill it, and completion arrives in-session as
+a notice (`job_output <id>` reads it on demand). Without a job registry — no
+`dsh-jobs` composed, or no controller serving the agent — the same work runs
+synchronously and its output becomes the command text.
+
 ### First publish: remote and upstream
 
-`/scion init` only runs `git init` and writes the manifest — it does **not**
-configure a remote, because credentials are yours. Configure one once:
+The repository URL is given to scion, not to a shell — nothing here needs the
+`git` CLI. Configure the remote once, either at init time or later:
 
-```sh
-cd <scion-root>
-git remote add origin git@your-host:you/demo-scion.git   # or user@server:~/scions/demo.git (a bare repo)
 ```
+/scion init my-work --remote git@your-host:you/demo-scion.git
+/scion remote git@your-host:you/demo-scion.git     # add or update origin
+/scion remote                                      # show remotes and upstream
+```
+
+Any URL form git accepts works (`https://…`, `git@host:path`, `ssh://…`, a local
+path). A URL carrying credentials is stored verbatim but always **displayed
+masked** (`https://***@host/…`).
 
 After that, **`/scion push --push` sets the upstream itself** with
 `git push --set-upstream origin <branch>` when the branch has none, so a first
 publish needs no manual `git push -u`. With no remote at all it says so and
-tells you to run `git remote add`.
+tells you to run `/scion remote <url>`.
 
 `/scion pull` uses `git pull --ff-only`: when both sides changed the workspace it
 fails and asks you to merge explicitly. That is deliberate — **only the
@@ -137,10 +152,10 @@ profile entry.
 
 ```sh
 # Published package, packaged DSH app:
-dsh plugin --profile web add @asyouwish/dsh-scion@0.3.0
+dsh plugin --profile web add @asyouwish/dsh-scion@0.4.0
 # From a source checkout, reach the same launcher through its script:
 cd /path/to/deepseek-harness
-pnpm dsh plugin --profile web add @asyouwish/dsh-scion@0.3.0
+pnpm dsh plugin --profile web add @asyouwish/dsh-scion@0.4.0
 # Add --registry=https://registry.npmjs.org/ when your default registry is a
 # mirror that may lag behind a just-published version.
 
@@ -150,7 +165,7 @@ pnpm dsh plugin --profile web add @asyouwish/dsh-scion@0.3.0
 # rewrites the installed plugin in place and a file added later (lib/prune.js)
 # stays invisible until the install is re-run. For an independent copy, pack a
 # tarball first:
-#   pnpm pack && dsh plugin --profile web add /path/to/asyouwish-dsh-scion-0.3.0.tgz
+#   pnpm pack && dsh plugin --profile web add /path/to/asyouwish-dsh-scion-0.4.0.tgz
 
 # Then restart `dsh web`. dsh-hmr ignores **/node_modules, so plugin *code*
 # changes are not hot-reloaded.
@@ -174,7 +189,7 @@ place, and delete the old `insert:` row at the same time:
 
 ```sh
 dsh plugin --profile web remove @asyouwish/dsh-scion
-dsh plugin --profile web add @asyouwish/dsh-scion@0.3.0
+dsh plugin --profile web add @asyouwish/dsh-scion@0.4.0
 ```
 
 `dsh plugin` reports success even when it merely reinstalled the package, and a
@@ -217,7 +232,7 @@ Verify with `/scion status`: it prints `branch`, `remote`, `upstream`,
 ```sh
 pnpm install
 pnpm build      # tsc → lib/
-pnpm test       # 28 tests
+pnpm test       # 40 tests
 pnpm verify     # build + test
 ```
 
@@ -238,7 +253,15 @@ Tests come in three tiers:
 - `tests/loader-composition.spec.ts` — mounting through the real cordis Loader:
   the shipped `dsh.bundle` patch layer alone mounts `/scion`, a profile layer
   overrides it, and a bad config stays inert.
-- `tests/git.spec.ts` — repository state and the first-push upstream flow.
+- `tests/git.spec.ts` — repository state, the first-push upstream flow, and
+  remote add/update plus credential masking.
+- `tests/remote.spec.ts` — the in-surface repository flow: `/scion init
+  --remote` in one step, `/scion remote` add/update/report, and the refusal
+  outside a git work tree.
+- `tests/jobs.spec.ts` — the background-job adapter (registration, streaming,
+  cancel-to-kill, failure settlement, no-registry fallback) and the service
+  routes: `push` submits a job when a registry is composed and runs
+  synchronously when it is not.
 
 ## Modules
 
@@ -250,6 +273,7 @@ Tests come in three tiers:
 | `src/commands.ts` | `/scion` argument grammar (pure, unit-tested) |
 | `src/export.ts` | push: workspace-owned local sessions → plaintext repo envelopes |
 | `src/prune.ts` | prune: drop repo sessions the workspace no longer owns |
+| `src/jobs.ts` | background-job adapter for push/pull/prune (optional `dsh-jobs` peer) |
 | `src/import.ts` | pull: repo → read-only local sessions (cwd localization, ownership, mode bits) |
 | `src/readonly.ts` | `agent/pre-step` gate |
 | `src/ownership.ts` | Machine-local ownership index (serialized writes, atomic replace) |
@@ -257,4 +281,4 @@ Tests come in three tiers:
 | `src/repo-format.ts` | Repo envelope codec (dense-seq validation) |
 | `src/locate.ts` | Mirrors the backend's directory naming and **verifies** the result |
 | `src/workspace.ts` | Local workspace synthesis and attach (doubles as the post-import self-check) |
-| `src/git.ts` | `git` subprocess wrapper |
+| `src/git.ts` | `git` subprocess wrapper, incl. remote configuration (`/scion remote`) |

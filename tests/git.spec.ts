@@ -11,8 +11,11 @@ import {
   currentBranch,
   isDirty,
   isGitWorkTree,
+  maskRemoteUrl,
   pushSettingUpstream,
   remoteNames,
+  remoteUrl,
+  setRemote,
   upstreamOf,
 } from '../src/git.ts'
 
@@ -71,5 +74,23 @@ describe('git wrapper', () => {
     await promisify(execFile)('git', ['init', '-b', 'main'], { cwd: base })
     expect(await remoteNames(base)).toEqual([])
     expect(await upstreamOf(base)).toBeUndefined()
+  })
+
+  it('adds, updates, and reports remotes for the in-surface sync flow', async () => {
+    const { work } = await makePair()
+    expect(await remoteUrl(work, 'origin')).toBeDefined()
+    expect(await remoteUrl(work, 'missing')).toBeUndefined()
+
+    expect(await setRemote(work, 'origin', 'https://example.com/team/repo.git')).toBe('updated')
+    expect(await remoteUrl(work, 'origin')).toBe('https://example.com/team/repo.git')
+    expect(await setRemote(work, 'backup', 'git@example.com:team/repo.git')).toBe('added')
+    expect((await remoteNames(work)).sort()).toEqual(['backup', 'origin'])
+  })
+
+  it('masks credentials in a displayed URL', () => {
+    expect(maskRemoteUrl('https://user:token@example.com/team/repo.git'))
+      .toBe('https://***@example.com/team/repo.git')
+    expect(maskRemoteUrl('git@example.com:team/repo.git')).toBe('git@example.com:team/repo.git')
+    expect(maskRemoteUrl('/srv/git/repo.git')).toBe('/srv/git/repo.git')
   })
 })

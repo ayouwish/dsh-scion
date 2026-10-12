@@ -31,8 +31,18 @@ describe('command grammar', () => {
   it('parses the documented subcommands', () => {
     expect(parseScionCommand('')).toEqual({ kind: 'help' })
     expect(parseScionCommand('status')).toEqual({ kind: 'status' })
-    expect(parseScionCommand('init')).toEqual({ kind: 'init', name: undefined })
-    expect(parseScionCommand('init my-work')).toEqual({ kind: 'init', name: 'my-work' })
+    expect(parseScionCommand('init')).toEqual({ kind: 'init', name: undefined, remote: undefined })
+    expect(parseScionCommand('init my-work')).toEqual({ kind: 'init', name: 'my-work', remote: undefined })
+    expect(parseScionCommand('init --remote git@host:you/repo.git')).toEqual({
+      kind: 'init', name: undefined, remote: 'git@host:you/repo.git',
+    })
+    expect(parseScionCommand('init my-work --remote https://host/you/repo.git')).toEqual({
+      kind: 'init', name: 'my-work', remote: 'https://host/you/repo.git',
+    })
+    expect(parseScionCommand('remote')).toEqual({ kind: 'remote', url: undefined })
+    expect(parseScionCommand('remote https://host/you/repo.git')).toEqual({
+      kind: 'remote', url: 'https://host/you/repo.git',
+    })
     expect(parseScionCommand('push')).toEqual({ kind: 'push', sessionIds: undefined, push: false })
     expect(parseScionCommand('push --push')).toEqual({ kind: 'push', sessionIds: undefined, push: true })
     expect(parseScionCommand('pull')).toEqual({ kind: 'pull', sessionIds: undefined, git: true })
@@ -59,6 +69,8 @@ describe('command grammar', () => {
     expect(parseScionCommand('push --sessions')).toMatchObject({ kind: 'error' })
     expect(parseScionCommand('prune --push')).toMatchObject({ kind: 'error' })
     expect(parseScionCommand('status extra')).toMatchObject({ kind: 'error' })
+    expect(parseScionCommand('init --remote')).toMatchObject({ kind: 'error' })
+    expect(parseScionCommand('remote a b')).toMatchObject({ kind: 'error' })
     expect(parseScionCommand('forget')).toMatchObject({ kind: 'error' })
   })
 })

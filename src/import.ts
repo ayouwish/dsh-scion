@@ -43,6 +43,8 @@ export interface ScionImportOptions {
   /** Machine-local ownership index. */
   readonly ownership: ScionOwnershipStore
   readonly signal?: AbortSignal
+  /** Called before each repo session is read, for job progress narration. */
+  readonly onProgress?: (done: number, total: number, id: string) => void
 }
 
 /** Outcome of one import. */
@@ -109,7 +111,9 @@ export async function importSessions(
   const unchanged: string[] = []
   const refused: { id: string; reason: string }[] = []
 
-  for (const id of ids) {
+  for (const [position, id] of ids.entries()) {
+    options.onProgress?.(position, ids.length, id)
+    options.signal?.throwIfAborted()
     try {
       const session = await readRepoSession(localRoot, id)
       assertVersion(id, session)

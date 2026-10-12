@@ -47,6 +47,10 @@ export interface ScionPruneOptions {
   readonly ownership: ScionOwnershipStore
   /** Explicit ids to drop; omitted drops every recorded session the workspace no longer owns. */
   readonly sessionIds?: readonly string[]
+  /** Optional cancellation observed between deletions. */
+  readonly signal?: AbortSignal
+  /** Called after each repo file is removed, for job progress narration. */
+  readonly onProgress?: (done: number, total: number, id: string) => void
 }
 
 /** What a prune does, computed before anything is deleted. */
@@ -91,9 +95,11 @@ export async function pruneSessions(ctx: Context, options: ScionPruneOptions): P
   const { plan, manifest } = await computePrune(ctx, options)
   if (plan.pruned.length === 0) return plan
   let next = manifest
-  for (const entry of plan.pruned) {
+  for (const [position, entry] of plan.pruned.entries()) {
+    options.signal?.throwIfAborted()
     await rm(repoSessionPath(plan.root, entry.id), { force: true })
     next = removeManifestSession(next, entry.id)
+    options.onProgress?.(position + 1, plan.pruned.length, entry.id)
   }
   await writeManifest(plan.root, next)
   return plan

@@ -10,7 +10,8 @@
 /** One parsed `/scion` invocation. */
 export type ScionCommand =
   | { readonly kind: 'status' }
-  | { readonly kind: 'init'; readonly name: string | undefined }
+  | { readonly kind: 'init'; readonly name: string | undefined; readonly remote: string | undefined }
+  | { readonly kind: 'remote'; readonly url: string | undefined }
   | { readonly kind: 'push'; readonly sessionIds: readonly string[] | undefined; readonly push: boolean }
   | { readonly kind: 'pull'; readonly sessionIds: readonly string[] | undefined; readonly git: boolean }
   | { readonly kind: 'prune'; readonly sessionIds: readonly string[] | undefined; readonly dryRun: boolean }
@@ -23,7 +24,8 @@ export const SCION_USAGE = [
   'Scion — a git-carried workspace + session unit.',
   '',
   '/scion status                     show this scion, local sessions, and imported sessions',
-  '/scion init [name]                initialize the current directory as a scion',
+  '/scion init [name] [--remote <url>]  initialize this directory as a scion and optionally set origin',
+  '/scion remote [<url>]             show, or set, the origin repository URL',
   '/scion push [--sessions a,b] [--push]   export local sessions into the repo (commit; --push also pushes)',
   '/scion pull [--sessions a,b] [--no-git]  git pull, then import repo sessions read-only',
   '/scion prune [--sessions a,b] [--dry-run]  drop exported sessions the workspace no longer owns',
@@ -46,9 +48,26 @@ export function parseScionCommand(rawInput: string): ScionCommand {
     case 'status':
       return rest.length === 0 ? { kind: 'status' } : unexpected(rest[0], 'status')
     case 'init': {
-      if (rest.length === 0) return { kind: 'init', name: undefined }
-      if (rest.length === 1 && !rest[0]!.startsWith('-')) return { kind: 'init', name: rest[0] }
-      return unexpected(rest[0], 'init')
+      let name: string | undefined
+      let remote: string | undefined
+      for (let index = 0; index < rest.length; index++) {
+        const token = rest[index]!
+        if (token === '--remote') {
+          const value = rest[index + 1]
+          if (value === undefined) return { kind: 'error', message: '--remote needs a repository URL' }
+          remote = value
+          index++
+          continue
+        }
+        if (token.startsWith('-') || name !== undefined) return unexpected(token, 'init')
+        name = token
+      }
+      return { kind: 'init', name, remote }
+    }
+    case 'remote': {
+      if (rest.length === 0) return { kind: 'remote', url: undefined }
+      if (rest.length === 1 && !rest[0]!.startsWith('-')) return { kind: 'remote', url: rest[0] }
+      return unexpected(rest[0], 'remote')
     }
     case 'push': {
       const selection = parseSelection(rest, ['--sessions', '--push'])

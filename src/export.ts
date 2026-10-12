@@ -38,6 +38,8 @@ export interface ScionExportOptions {
   /** Machine-local ownership index. */
   readonly ownership: ScionOwnershipStore
   readonly signal?: AbortSignal
+  /** Called before each session is read, for job progress narration. */
+  readonly onProgress?: (done: number, total: number, id: string) => void
 }
 
 /** One exported session. */
@@ -167,8 +169,10 @@ export async function exportSessions(
   let bytesWritten = 0
   const exported: ScionExportedSession[] = []
   const skipped: { id: string; reason: string }[] = []
-  for (const header of selected) {
+  for (const [position, header] of selected.entries()) {
     const id = String(header.id)
+    options.onProgress?.(position, selected.length, id)
+    options.signal?.throwIfAborted()
     try {
       // A read handle never takes write ownership, so exporting a session that
       // another machine is still writing is safe and reads its valid prefix.

@@ -37,10 +37,12 @@ export * from './paths.ts'
 export * from './repo-format.ts'
 export { ScionManifestError, createManifest, listRepoSessionIds, readManifest, readRepoSession, removeManifestSession, upsertManifestSession, writeManifest } from './manifest.ts'
 export { ScionOwnershipError, ScionOwnershipStore } from './ownership.ts'
-export { ScionGitError, commitAll, headCommit, initRepo, isDirty, isGitWorkTree, pull, push } from './git.ts'
+export { ScionGitError, commitAll, headCommit, initRepo, isDirty, isGitWorkTree, maskRemoteUrl, pull, push, remoteUrl, setRemote } from './git.ts'
 export { exportSessions, listCandidateSessions, listLocalSessions, scopeToWorkspace } from './export.ts'
 export { ScionImportRefusal, importSessions, planImport } from './import.ts'
 export { planPrune, pruneSessions } from './prune.ts'
+export { SCION_JOB_KIND, startScionJob } from './jobs.ts'
+export type { ScionJob } from './jobs.ts'
 export { installReadOnlyGate, isReadOnlySession } from './readonly.ts'
 export { attachImported, ensureWorkspaceFor, isAttached } from './workspace.ts'
 export { encodeSegment, locateSessionDir, projectKey, sessionsRoot } from './locate.ts'
@@ -118,7 +120,7 @@ export async function apply(ctx: Context, config?: Config): Promise<void> {
     commandCtx.commands.register({
       name: 'scion',
       description: 'Portable workspace + session units carried by git',
-      input: { hint: '[status|init|push|pull|forget]' },
+      input: { hint: '[status|init|remote|push|pull|prune|forget]' },
       handler: (invocation: CommandInvocation): Promise<CommandResult> =>
         service.run(invocation.agent, invocation.rawInput),
     })
