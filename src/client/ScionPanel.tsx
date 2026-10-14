@@ -3,11 +3,43 @@
  * scion's session tree — which machines exported what, and what is local or
  * read-only here.
  *
- * The component is deliberately dependency-free (React + inline styles): the
- * panel's data arrives as JSON from `GET /api/scion/tree`, so no client service
- * or generated contract is involved.
+ * The component is deliberately dependency-free (React + inline styles) and
+ * speaks only DSH design tokens (`--dsw-alias-*`, `--ds-font-family-code`,
+ * `--dsh-content-font-size-secondary`), so it follows the Web theme in light
+ * and dark alike instead of pinning a palette. Fallbacks are scheme-neutral
+ * (`Canvas`/`CanvasText`, mid-gray borders) so an unknown token still renders.
  */
 import { createElement, useCallback, useEffect, useState } from 'react'
+
+/** Theme tokens the panel reads. */
+const T = {
+  /** Popover surface (layer 1 is the standard raised card). */
+  surface: 'var(--dsw-alias-bg-layer-1, Canvas)',
+  /** Primary label color. */
+  text: 'var(--dsw-alias-label-primary, CanvasText)',
+  /** Secondary label color. */
+  secondary: 'var(--dsw-alias-label-secondary, #808080)',
+  /** Tertiary/caption color. */
+  muted: 'var(--dsw-alias-label-tertiary, #808080)',
+  /** Standard border. */
+  border: 'var(--dsw-alias-border-l2, rgba(127,127,127,0.35))',
+  /** Hairline divider. */
+  divider: 'var(--dsw-alias-border-l1, rgba(127,127,127,0.22))',
+  /** Raised shadow. */
+  shadow: 'var(--dsw-shadow-lv2, 0 8px 28px rgba(0,0,0,0.22))',
+  /** Card radius. */
+  radius: 'var(--dsw-radius-lg, 10px)',
+  /** Chip radius. */
+  radiusSmall: 'var(--dsw-radius-sm, 4px)',
+  /** State colors. */
+  success: 'var(--dsw-alias-state-success-primary, #2f9e63)',
+  info: 'var(--dsw-alias-state-business-primary, #3b7ddd)',
+  warn: 'var(--dsw-alias-state-warn-primary, #b7791f)',
+  error: 'var(--dsw-alias-state-error-primary, #c0392b)',
+  /** Monospace stack and the user-adjustable secondary content size. */
+  code: 'var(--ds-font-family-code, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace)',
+  size: 'var(--dsh-content-font-size-secondary, 12px)',
+} as const
 
 /** One exported session in the snapshot. */
 interface TreeSession {
@@ -73,33 +105,39 @@ function machineLabel(root: string): string {
   return parts.length <= 2 ? root : `…/${parts.slice(-2).join('/')}`
 }
 
-const MUTED: React.CSSProperties = { opacity: 0.62 }
-const MONO: React.CSSProperties = {
-  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-  fontSize: 12,
-}
+/** Code-font text at the content's secondary size. */
+const CODE: React.CSSProperties = { fontFamily: T.code, fontSize: T.size }
+/** Dimmed code-font text. */
+const DIM: React.CSSProperties = { ...CODE, color: T.muted }
 
-/** One badge chip. */
-function Badge({ text, tone }: { readonly text: string; readonly tone: 'local' | 'readonly' | 'plain' }): JSX.Element {
-  const background = tone === 'local' ? 'rgba(64,160,96,0.18)' : tone === 'readonly' ? 'rgba(64,120,200,0.18)' : 'rgba(127,127,127,0.16)'
-  const color = tone === 'local' ? '#3f9d63' : tone === 'readonly' ? '#5b8dd6' : 'inherit'
+/** One badge chip: state-colored text and border, no background fill. */
+function Badge({ text, color }: { readonly text: string; readonly color: string }): JSX.Element {
   return createElement('span', {
-    style: { ...MONO, padding: '0 5px', borderRadius: 4, background, color, marginLeft: 6, whiteSpace: 'nowrap' },
+    style: {
+      ...CODE,
+      color,
+      border: '1px solid currentColor',
+      borderRadius: T.radiusSmall,
+      padding: '0 5px',
+      marginLeft: 6,
+      whiteSpace: 'nowrap',
+      opacity: 0.92,
+    },
   }, text)
 }
 
 /** One session row. */
 function SessionRow({ session }: { readonly session: TreeSession }): JSX.Element {
-  return createElement('div', { style: { ...MONO, display: 'flex', alignItems: 'baseline', gap: 8, padding: '2px 0 2px 18px' } },
-    createElement('span', { style: { opacity: 0.55 } }, '└'),
-    createElement('span', { style: { flex: '0 0 auto' } }, session.id),
-    createElement('span', { style: MUTED }, `${String(session.events)} events`),
-    createElement('span', { style: MUTED }, stamp(session.exportedAt)),
-    session.bytes === undefined ? null : createElement('span', { style: MUTED }, bytes(session.bytes)),
-    session.exportable ? createElement(Badge, { text: '本机·可导出', tone: 'local' })
-      : session.readOnly ? createElement(Badge, { text: '只读导入', tone: 'readonly' })
-        : session.local ? createElement(Badge, { text: '本机·未挂载', tone: 'plain' })
-          : createElement(Badge, { text: '他机', tone: 'plain' }),
+  return createElement('div', { style: { ...CODE, display: 'flex', alignItems: 'baseline', gap: 8, padding: '2px 0 2px 18px' } },
+    createElement('span', { style: { color: T.muted } }, '└'),
+    createElement('span', { style: { flex: '0 0 auto', color: T.text } }, session.id),
+    createElement('span', { style: DIM }, `${String(session.events)} events`),
+    createElement('span', { style: DIM }, stamp(session.exportedAt)),
+    session.bytes === undefined ? null : createElement('span', { style: DIM }, bytes(session.bytes)),
+    session.exportable ? createElement(Badge, { text: '本机·可导出', color: T.success })
+      : session.readOnly ? createElement(Badge, { text: '只读导入', color: T.info })
+        : session.local ? createElement(Badge, { text: '本机·未挂载', color: T.secondary })
+          : createElement(Badge, { text: '他机', color: T.secondary }),
   )
 }
 
@@ -108,12 +146,12 @@ function MachineGroup({ machine }: { readonly machine: TreeMachine }): JSX.Eleme
   const [open, setOpen] = useState(true)
   return createElement('div', null,
     createElement('div', {
-      style: { ...MONO, display: 'flex', alignItems: 'baseline', gap: 6, cursor: 'pointer', padding: '3px 0' },
+      style: { ...CODE, display: 'flex', alignItems: 'baseline', gap: 6, cursor: 'pointer', padding: '3px 0', color: T.text },
       onClick: () => { setOpen(value => !value) },
     },
-      createElement('span', { style: MUTED }, open ? '▾' : '▸'),
+      createElement('span', { style: { color: T.muted } }, open ? '▾' : '▸'),
       createElement('span', null, machineLabel(machine.originRoot)),
-      createElement('span', { style: MUTED }, `${String(machine.sessions.length)} session(s)`),
+      createElement('span', { style: DIM }, `${String(machine.sessions.length)} session(s)`),
     ),
     open ? createElement('div', { style: { paddingLeft: 6 } },
       ...machine.sessions.map(session => createElement(SessionRow, { key: session.id, session }))) : null,
@@ -168,27 +206,37 @@ export function ScionPanel({ sessionId }: ScionPanelProps): JSX.Element {
       type: 'button',
       title: 'Scion: sessions in this workspace repo',
       onClick: () => { setOpen(value => !value) },
-      style: { ...MONO, padding: '2px 8px', borderRadius: 6, cursor: 'pointer', border: '1px solid rgba(127,127,127,0.35)', background: 'transparent', color: 'inherit' },
+      style: {
+        ...CODE,
+        padding: '2px 8px',
+        borderRadius: T.radiusSmall,
+        cursor: 'pointer',
+        border: `1px solid ${T.border}`,
+        background: 'transparent',
+        color: 'inherit',
+      },
     }, 'Scion'),
     !open ? null : createElement('div', {
       style: {
         position: 'fixed', top: 56, right: 16, width: 'min(560px, 92vw)', maxHeight: '72vh', overflow: 'auto',
-        zIndex: 60, padding: 12, borderRadius: 10, border: '1px solid rgba(127,127,127,0.28)',
-        background: 'var(--dsh-surface, #1e1e22)', color: 'inherit', boxShadow: '0 8px 28px rgba(0,0,0,0.35)',
+        zIndex: 60, padding: 12, borderRadius: T.radius,
+        border: `1px solid ${T.border}`, background: T.surface, color: T.text, boxShadow: T.shadow,
       },
     },
-      createElement('div', { style: { ...MONO, display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 } },
+      createElement('div', { style: { ...CODE, display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 } },
         createElement('strong', null, snapshot === undefined ? 'scion' : `scion ${snapshot.scion.name}`),
         createElement('button', {
           type: 'button', onClick: close,
-          style: { ...MONO, border: 'none', background: 'transparent', color: 'inherit', cursor: 'pointer', opacity: 0.7 },
+          style: { ...CODE, border: 'none', background: 'transparent', color: T.muted, cursor: 'pointer' },
         }, '✕'),
       ),
-      snapshot === undefined ? null : createElement('div', { style: { ...MONO, ...MUTED, marginTop: 4 } },
+      snapshot === undefined ? null : createElement('div', { style: { ...CODE, color: T.muted, marginTop: 4 } },
         createElement('div', null,
-          `${snapshot.git.branch ?? '(unborn)'}`
-          + (snapshot.git.upstream === undefined ? '' : ` → ${snapshot.git.upstream}`)
-          + (snapshot.git.dirty ? ' · dirty' : ' · clean'),
+          createElement('span', { style: { color: snapshot.git.dirty ? T.warn : T.secondary } },
+            `${snapshot.git.branch ?? '(unborn)'}`
+            + (snapshot.git.upstream === undefined ? '' : ` → ${snapshot.git.upstream}`)
+            + (snapshot.git.dirty ? ' · dirty' : ' · clean'),
+          ),
         ),
         snapshot.git.remotes.length === 0 ? null
           : createElement('div', null, snapshot.git.remotes.map(remote => `${remote.name} ${remote.url ?? '(unset)'}`).join(' · ')),
@@ -198,11 +246,11 @@ export function ScionPanel({ sessionId }: ScionPanelProps): JSX.Element {
           + `, readonly ${String(snapshot.local.imported.length)}`,
         ),
       ),
-      createElement('div', { style: { marginTop: 8, borderTop: '1px solid rgba(127,127,127,0.22)', paddingTop: 6 } },
-        loading ? createElement('div', { style: { ...MONO, ...MUTED } }, 'loading…') : null,
-        error === undefined ? null : createElement('div', { style: { ...MONO, color: '#d97b7b' } }, error),
+      createElement('div', { style: { marginTop: 8, borderTop: `1px solid ${T.divider}`, paddingTop: 6 } },
+        loading ? createElement('div', { style: DIM }, 'loading…') : null,
+        error === undefined ? null : createElement('div', { style: { ...CODE, color: T.error } }, error),
         snapshot === undefined ? null : (snapshot.machines.length === 0
-          ? createElement('div', { style: { ...MONO, ...MUTED } }, 'this repo carries no exported sessions yet')
+          ? createElement('div', { style: DIM }, 'this repo carries no exported sessions yet')
           : createElement('div', null, ...snapshot.machines.map(machine =>
             createElement(MachineGroup, { key: machine.originRoot, machine })))),
       ),

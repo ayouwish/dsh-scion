@@ -60,7 +60,31 @@ describe.skipIf(!built)('browser bundle', () => {
     expect(typeof registered.factory).toBe('function')
   })
 
-  it('exposes a client plugin that registers the session-header action', () => {
+  it('follows the Web theme through DSH design tokens', () => {
+    const source = readFileSync(bundlePath, 'utf8')
+    // The popover reads the alias tokens with scheme-neutral fallbacks, so the
+    // light theme stays readable instead of inheriting a pinned dark palette.
+    for (const token of [
+      'var(--dsw-alias-bg-layer-1',
+      'var(--dsw-alias-label-primary',
+      'var(--dsw-alias-label-tertiary',
+      'var(--dsw-alias-border-l2',
+      'var(--dsw-alias-state-success-primary',
+      'var(--dsw-alias-state-error-primary',
+      'var(--ds-font-family-code',
+      'var(--dsh-content-font-size-secondary',
+      'CanvasText',
+    ]) {
+      expect(source).toContain(token)
+    }
+    // The dark-pinned palette this panel used to carry must not come back.
+    // (Neutral mid-gray fallbacks such as rgba(127,127,127,…) are fine: they
+    // read on both schemes, and the tokens win whenever the theme provides them.)
+    expect(source).not.toMatch(/#1e1e22|#3f9d63|#5b8dd6|#d97b7b/i)
+    expect(source).not.toMatch(/rgba\(64,160,96|rgba\(64,120,200/i)
+  })
+
+  it('exposes a client plugin that registers the tree action, the header chip, and the row mark', () => {
     const registered = loadBundle()
     const plugin = registered.factory!(name => name.startsWith('react') ? reactStub : {}) as {
       readonly name?: string
@@ -72,9 +96,9 @@ describe.skipIf(!built)('browser bundle', () => {
     expect(typeof plugin.apply).toBe('function')
 
     const registrations: { definition?: Record<string, unknown>; component?: unknown }[] = []
-    let injectedName: string | undefined
+    const injectedNames: string[] = []
     const slots = {
-      inject: (name: string, callback: () => unknown): void => { injectedName = name; callback() },
+      inject: (name: string, callback: () => unknown): void => { injectedNames.push(name); callback() },
       register: (definition: Record<string, unknown>, component: unknown): (() => void) => {
         registrations.push({ definition, component })
         return () => undefined
@@ -82,13 +106,27 @@ describe.skipIf(!built)('browser bundle', () => {
     }
     plugin.apply!({ slots })
 
-    expect(injectedName).toBe('conversation.session.header.actions')
-    expect(registrations).toHaveLength(1)
+    expect(injectedNames).toEqual([
+      'conversation.session.header.actions',
+      'conversation.session.header.utilities',
+      'sidebar.session.row.leading',
+    ])
+    expect(registrations).toHaveLength(3)
     expect(registrations[0]!.definition).toMatchObject({
       name: 'conversation.session.header.actions',
       id: 'scion-tree',
       order: 30,
     })
-    expect(typeof registrations[0]!.component).toBe('function')
+    expect(registrations[1]!.definition).toMatchObject({
+      name: 'conversation.session.header.utilities',
+      id: 'scion-readonly',
+      order: 30,
+    })
+    expect(registrations[2]!.definition).toMatchObject({
+      name: 'sidebar.session.row.leading',
+      id: 'scion-readonly-mark',
+      order: 20,
+    })
+    for (const registration of registrations) expect(typeof registration.component).toBe('function')
   })
 })

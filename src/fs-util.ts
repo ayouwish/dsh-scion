@@ -112,6 +112,43 @@ export const WRITABLE_DIR_MODE = 0o755
 export const WRITABLE_FILE_MODE = 0o644
 
 /**
+ * Name of the persistence kernel-lease file inside a session directory.
+ *
+ * `@deepseek-ai/dsh-session-persistence-jsonl` opens `<dir>/session.lock` for
+ * writing whenever any session is attached, live or read-only, so an imported
+ * session whose lease file is unwritable can never become live — and DSH's
+ * projection layer only checkpoints live sessions, which is what a listing
+ * reads titles from. The file is therefore the one entry a read-only import
+ * leaves writable (see `applyReadOnly`).
+ */
+export const SESSION_LOCK_FILENAME = 'session.lock'
+
+/**
+ * Apply the read-only mode set of an imported session.
+ *
+ * Every entry becomes unwritable — the directory included, so a log rewrite by
+ * rename fails — with one exception: `session.lock` stays writable (and is
+ * created when absent), because that is the file DSH opens for writing to take
+ * its kernel lease on any attach. Without a usable lease file the session can
+ * never become live, and DSH's projection layer only checkpoints live sessions,
+ * which is where session lists read their titles from.
+ *
+ * The directory is momentarily writable so the lease file can be created; the
+ * strict set is applied in the same call and is what callers observe.
+ *
+ * @param directory - session directory to lock down.
+ */
+export async function applyReadonlyImportModes(directory: string): Promise<void> {
+  const { chmod, open } = await import('node:fs/promises')
+  await chmod(directory, WRITABLE_DIR_MODE)
+  const lease = join(directory, SESSION_LOCK_FILENAME)
+  await chmod(lease, WRITABLE_FILE_MODE).catch(() => undefined)
+  const handle = await open(lease, 'w', WRITABLE_FILE_MODE).catch(() => undefined)
+  await handle?.close()
+  await chmodTree(directory, READONLY_DIR_MODE, READONLY_FILE_MODE, [SESSION_LOCK_FILENAME])
+}
+
+/**
  * Recursively apply permission bits to a directory tree.
  *
  * On Windows the mode is effectively ignored, so the caller must treat this as
@@ -120,15 +157,22 @@ export const WRITABLE_FILE_MODE = 0o644
  * @param root - directory to chmod.
  * @param dirMode - mode for directories.
  * @param fileMode - mode for files.
+ * @param keepWritable - entry names that keep their own mode (the persistence
+ * lease file a read-only import must still let DSH open for writing).
  */
-export async function chmodTree(root: string, dirMode: number, fileMode: number): Promise<void> {
+export async function chmodTree(
+  root: string,
+  dirMode: number,
+  fileMode: number,
+  keepWritable: readonly string[] = [],
+): Promise<void> {
   const { chmod, readdir } = await import('node:fs/promises')
   await chmod(root, dirMode)
   const entries = await readdir(root, { withFileTypes: true })
   for (const entry of entries) {
     const child = join(root, entry.name)
-    if (entry.isDirectory()) await chmodTree(child, dirMode, fileMode)
-    else await chmod(child, fileMode)
+    if (entry.isDirectory()) await chmodTree(child, dirMode, fileMode, keepWritable)
+    else if (!keepWritable.includes(entry.name)) await chmod(child, fileMode)
   }
 }
 

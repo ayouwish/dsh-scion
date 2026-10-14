@@ -25,12 +25,11 @@ import type { ScionOwnershipStore } from './ownership.ts'
 import type { ScionImportPlan, ScionRepoSession } from './types.ts'
 import { listRepoSessionIds, readManifest, readRepoSession } from './manifest.ts'
 import {
+  applyReadonlyImportModes,
   canonicalizeOrSelf,
   chmodTree,
-  READONLY_DIR_MODE,
-  READONLY_FILE_MODE,
-  WRITABLE_DIR_MODE,
   WRITABLE_FILE_MODE,
+  WRITABLE_DIR_MODE,
 } from './fs-util.ts'
 import { locateSessionDir } from './locate.ts'
 
@@ -254,13 +253,22 @@ async function appendToImported(
 
 /**
  * Apply the filesystem read-only layer to an imported session.
+ *
+ * Everything — the directory included — becomes unwritable, so neither an
+ * append nor a rename-based log rewrite can land. The single exception is the
+ * persistence lease file `session.lock`, which stays writable and present:
+ * DSH opens it for writing whenever it attaches a session, and its projection
+ * layer, the source of the titles a session list reads, only checkpoints
+ * **live** sessions. A fully locked import is never attachable, which is what
+ * leaves synced sessions unnamed and re-folding their log on every visit.
+ *
  * @param localRoot - canonical local root.
  * @param id - session id.
  */
 async function applyReadOnly(localRoot: string, id: string): Promise<void> {
   const directory = await locateSessionDir(localRoot, id)
   if (directory === undefined) return
-  await chmodTree(directory, READONLY_DIR_MODE, READONLY_FILE_MODE)
+  await applyReadonlyImportModes(directory)
 }
 
 /**

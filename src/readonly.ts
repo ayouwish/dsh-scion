@@ -1,12 +1,18 @@
 /**
  * The read-only gate.
  *
- * Three layers keep an imported session unwritable, in decreasing strength:
+ * Three layers keep an imported session from accepting new work, in decreasing
+ * strength:
  *
- * 1. **Filesystem** — the imported session directory and its files are made
- *    unwritable. A write handle must first open `session.lock` for writing to
- *    take the kernel lease, so `EACCES` there fails the write open outright.
- *    Read handles never touch the lock, so reading and forking are unaffected.
+ * 1. **Filesystem** — every entry of the imported session, the directory and
+ *    the session log included, is made unwritable, so appending events or
+ *    rewriting the log (a rename needs a writable directory) fails with
+ *    `EACCES`. One entry is deliberately left writable: the persistence lease
+ *    file `session.lock`, which DSH opens for writing whenever it attaches a
+ *    session, and its projection layer — the source of the titles a session
+ *    list reads — only checkpoints **live** sessions. A fully unwritable import
+ *    can therefore never be attached, which is exactly what leaves synced
+ *    sessions unnamed and re-folding their log on every visit.
  *    POSIX-only: Windows ignores these bits.
  * 2. **Ownership** — the plugin's durable index marks the id imported; the
  *    command surface refuses to export it and reports it as read-only.
@@ -23,6 +29,8 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { PreStepDecision } from '@deepseek-ai/dsh-agent'
 import type { ScionOwnershipStore } from './ownership.ts'
+import { applyReadonlyImportModes } from './fs-util.ts'
+import { locateSessionDir } from './locate.ts'
 
 /**
  * Whether a session id is an imported, read-only scion session.
@@ -32,6 +40,32 @@ import type { ScionOwnershipStore } from './ownership.ts'
  */
 export function isReadOnlySession(ownership: ScionOwnershipStore, sessionId: string): boolean {
   return ownership.isImported(sessionId)
+}
+
+/**
+ * Re-apply the current read-only mode set to every import this machine owns.
+ *
+ * Imports made by an earlier version were fully 0555/0444, which blocks the
+ * persistence lease and therefore DSH's projection checkpoints; running this on
+ * plugin load repairs them in place, without a re-import. Best-effort: a
+ * missing directory or a permission failure on one record never fails the boot.
+ *
+ * @param ownership - machine-local ownership index.
+ * @returns the number of session directories the mode set was applied to.
+ */
+export async function refreshImportedModes(ownership: ScionOwnershipStore): Promise<number> {
+  let refreshed = 0
+  for (const record of ownership.all()) {
+    try {
+      const directory = await locateSessionDir(record.localRoot, record.sessionId)
+      if (directory === undefined) continue
+      await applyReadonlyImportModes(directory)
+      refreshed += 1
+    } catch {
+      // A record whose directory is gone or unreachable is not a boot failure.
+    }
+  }
+  return refreshed
 }
 
 /**

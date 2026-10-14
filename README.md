@@ -27,9 +27,14 @@ numbers and produce a log the persistence backend refuses to load. Therefore:
 
 | Layer | Mechanism | Scope |
 |---|---|---|
-| Filesystem | Imported directory `0555`, files `0444`. A write handle must first open `session.lock` for writing to take the kernel lease, so `EACCES` fails the write open outright. Read handles never touch the lock, so reading and forking are unaffected | POSIX; Windows ignores these bits |
+| Filesystem | Imported directory `0555` and every file `0444` — except `session.lock`, which stays writable because DSH opens exactly that file for writing to take its kernel lease on **any** attach, and its projection layer only checkpoints live sessions (the source of list titles). Every actual write is still refused: appending an event fails `EACCES` on the immutable log, and a rename-based rewrite needs the unwritable directory. Read handles never touch the lock, so reading and forking are unaffected | POSIX; Windows ignores these bits |
 | Ownership index | `$DSH_HOME/scion/ownership.json` records imported ids; export skips them and the command surface refuses them | All platforms |
 | Model step | `agent/pre-step` returns `{ kind: 'reject' }` (the same mechanism as `ArchivedSessionGate`). Pre-step runs before any `user/message` is appended, so a veto writes no prompt content into the log | All platforms |
+
+The lease exception is not cosmetic: a fully `0555`/`0444` import cannot be
+attached at all, which leaves synced sessions unnamed and re-folding their log
+on every visit. `/scion pull` and plugin load (which repairs older imports in
+place) both leave exactly `session.lock` writable.
 
 **Forking is unaffected at every layer**: a fork reads the source and creates a
 new session id elsewhere.
@@ -85,6 +90,19 @@ or takes an absolute `?root=`), so no generated remote contract is involved. The
 route is admitted by the browser connection like every other Host API route and
 **fails closed** when no connection authorizes it; hosts without the browser
 HTTP carrier (Electron) simply register no route.
+
+Imported sessions are marked in both places: the sidebar row gets a `只读·<machine>`
+mark (`sidebar.session.row.leading`, from the cached `GET /api/scion/imports`), and the
+session header carries a **read-only chip** (`conversation.session.header.utilities`)
+for synced sessions: `GET /api/scion/session?session=<id>` answers this machine's
+ownership record, and the chip renders `只读 · <machine>` only for imports, so a
+read-only copy is never mistaken for local work.
+
+Styling is token-only: the panel reads DSH design tokens (`--dsw-alias-*` for
+surface, labels, borders, states, `--ds-font-family-code`, and the
+user-adjustable `--dsh-content-font-size-secondary`) with scheme-neutral
+fallbacks, so it follows the Web theme in light and dark instead of pinning a
+palette.
 
 The browser half is built by `scripts/build-client.mjs`, which uses the
 **harness checkout's esbuild** because DSH's client build preset is
@@ -267,7 +285,7 @@ Verify with `/scion status`: it prints `branch`, `remote`, `upstream`,
 ```sh
 pnpm install
 pnpm build      # tsc → lib/ + the browser half (scripts/build-client.mjs)
-pnpm test       # 47 tests
+pnpm test       # 52 tests
 pnpm verify     # build + test
 ```
 
@@ -301,8 +319,9 @@ Tests come in three tiers:
   real repository: machine grouping, local/read-only/exportable flags, byte
   totals, and the route's 200/400/405/403 outcomes.
 - `tests/client-bundle.spec.ts` — the built browser half loaded in a VM:
-  closure-factory registration, externals through the injected `require`, and
-  the session-header action registration.
+  closure-factory registration, externals through the injected `require`, the
+  session-header action registration, and the theme-token guard (no pinned dark
+  palette).
 
 ## Modules
 

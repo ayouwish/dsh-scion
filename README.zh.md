@@ -20,11 +20,15 @@ session 日志是**追加式、自描述**的记录：`seq` 从 0 稠密连续�
 
 | 层 | 机制 | 覆盖 |
 |---|---|---|
-| 文件系统 | 导入目录 `0555`、文件 `0444`。写句柄必须先以写模式打开 `session.lock` 拿内核租约，`EACCES` 直接让写打开失败；读句柄不碰锁，所以读取和 fork 不受影响 | POSIX；Windows 忽略权限位 |
+| 文件系统 | 导入目录 `0555`、文件 `0444` —— **但 `session.lock` 保持可写**：DSH 在**任何** attach 时都会以写模式打开它来拿内核租约，而它的投影层只为 live session 写 checkpoint（列表标题就来自那里）。真正的写入依然被拒：追加事件会在不可写的日志上拿到 `EACCES`，靠 rename 的日志重写又需要可写目录。读句柄不碰锁，所以读取和 fork 不受影响 | POSIX；Windows 忽略权限位 |
 | 归属索引 | `$DSH_HOME/scion/ownership.json` 记录 imported id；导出时跳过、命令层拒绝 | 全平台 |
 | 模型步 | `agent/pre-step` 返回 `{kind:'reject'}`（与 `ArchivedSessionGate` 同机制）。pre-step 在 `user/message` **之前**，所以不会把 prompt 写进日志 | 全平台 |
 
 **fork 三层都不受影响**：fork 只读源、在别处建新 id。
+
+这个「租约例外」不是审美问题：完全 `0555`/`0444` 的导入根本 attach 不上，表现就是 sync
+下来的会话永远未命名、每次打开都重新 fold 一遍日志。`/scion pull` 和插件加载（它会就地修好
+旧版本留下的导入）都只把 `session.lock` 留成可写。
 
 ## 命令
 
@@ -68,6 +72,14 @@ repo 147 session(s) · 394.0 MiB · local 147 cwd-matching, 32 exportable, reado
 session 的 cwd，也接受绝对路径 `?root=`），所以**不需要**生成式的 remote contract。该路由和
 其他 Host API 路由一样由浏览器 connection 准入，**拿不到 connection 就 fail-closed**；没有
 浏览器 HTTP 载体的宿主（Electron）不会注册这条路由。
+
+导入的会话有两处标记：侧栏行上有 `只读·<机器>`（`sidebar.session.row.leading`，数据来自按页缓存的
+`GET /api/scion/imports`），会话头部还有一个 **只读徽标**（`conversation.session.header.utilities`）：`GET /api/scion/session?session=<id>`
+返回本机的归属记录，只有导入的会话才渲染 `只读 · <机器>`，所以同步来的只读副本不会被误当成本机工作。
+
+配色只走 DSH 的 design token：面板读 `--dsw-alias-*`（surface / label / border / state）、
+`--ds-font-family-code` 与用户可调的 `--dsh-content-font-size-secondary`，并带**明暗通用**的兜底值，
+因此跟随 dsh-web 的浅色/深色主题，不写死调色板。
 
 前端产物由 `scripts/build-client.mjs` 构建，用的是 **harness checkout 里的 esbuild** —— 因为
 DSH 的 client 构建预设是仓库内部文件、没有作为包发布。checkout 不在同级目录时用
@@ -223,7 +235,7 @@ purge 重建 `node_modules`（非交互时直接以
 ```sh
 pnpm install
 pnpm build      # tsc → lib/ + 浏览器半（scripts/build-client.mjs）
-pnpm test       # 47 个测试
+pnpm test       # 52 个测试
 pnpm verify     # build + test
 ```
 
@@ -245,7 +257,7 @@ pnpm verify     # build + test
 - `tests/tree.spec.ts` —— 面板 host 半（对真实后端 + 真实仓库）：按机器分组、本机/只读/可导出标记、
   字节合计，以及路由的 200/400/405/403
 - `tests/client-bundle.spec.ts` —— 在 VM 里加载真实产物：closure-factory 注册、externals 走注入的
-  `require`、会话头部动作的注册
+  `require`、会话头部动作的注册，以及**主题 token 守卫**（不允许写死深色调色板）
 
 ## 模块
 

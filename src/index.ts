@@ -28,9 +28,9 @@ import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type { CommandInvocation, CommandResult } from '@deepseek-ai/dsh-commands'
 import { ScionOwnershipStore } from './ownership.ts'
-import { installReadOnlyGate } from './readonly.ts'
+import { installReadOnlyGate, refreshImportedModes } from './readonly.ts'
 import { ScionService } from './service.ts'
-import { installTreeRoute } from './route.ts'
+import { installScionRoutes } from './route.ts'
 
 export * from './types.ts'
 export * from './commands.ts'
@@ -44,10 +44,15 @@ export { ScionImportRefusal, importSessions, planImport } from './import.ts'
 export { planPrune, pruneSessions } from './prune.ts'
 export { buildScionTree } from './tree.ts'
 export type { ScionTreeMachine, ScionTreeSession, ScionTreeSnapshot } from './tree.ts'
-export { SCION_TREE_PATH, createTreeHandler, installTreeRoute } from './route.ts'
+export {
+  SCION_IMPORTS_PATH, SCION_SESSION_PATH, SCION_TREE_PATH,
+  createImportsHandler, createSessionStateHandler, createTreeHandler,
+  installScionRoutes, installTreeRoute,
+} from './route.ts'
+export type { ScionImportEntry, ScionImportsPayload, ScionSessionState } from './route.ts'
 export { SCION_JOB_KIND, startScionJob } from './jobs.ts'
 export type { ScionJob } from './jobs.ts'
-export { installReadOnlyGate, isReadOnlySession } from './readonly.ts'
+export { installReadOnlyGate, isReadOnlySession, refreshImportedModes } from './readonly.ts'
 export { attachImported, ensureWorkspaceFor, isAttached } from './workspace.ts'
 export { encodeSegment, locateSessionDir, projectKey, sessionsRoot } from './locate.ts'
 export { ScionService } from './service.ts'
@@ -117,9 +122,13 @@ export async function apply(ctx: Context, config?: Config): Promise<void> {
   const ownership = new ScionOwnershipStore()
   await ownership.load()
 
+  // Repair imports made before the directory and lease file were left writable:
+  // without that, DSH can never attach them and their listings stay unnamed.
+  await refreshImportedModes(ownership).catch(() => 0)
+
   if (resolved.readonlyGate) installReadOnlyGate(ctx, ownership)
 
-  installTreeRoute(ctx, ownership)
+  installScionRoutes(ctx, ownership)
 
   const service = new ScionService(ctx, ownership)
   ctx.inject(['commands'], commandCtx => {

@@ -14,7 +14,10 @@ import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import { SESSION_FORMAT_VERSION, SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
 import { buildScionTree } from '../src/tree.ts'
-import { SCION_TREE_PATH, createTreeHandler } from '../src/route.ts'
+import {
+  SCION_IMPORTS_PATH, SCION_SESSION_PATH, SCION_TREE_PATH,
+  createImportsHandler, createSessionStateHandler, createTreeHandler,
+} from '../src/route.ts'
 import { createManifest, upsertManifestSession, writeManifest } from '../src/manifest.ts'
 import { repoSessionsDir } from '../src/paths.ts'
 import { ScionOwnershipStore } from '../src/ownership.ts'
@@ -226,5 +229,84 @@ describe('the tree route handler', () => {
     const denied = response()
     await rejected(request(`${SCION_TREE_PATH}?root=${encodeURIComponent(rootReal)}`), denied.res)
     expect(denied.status()).toBe(401)
+  })
+})
+
+describe('the session-state route handler', () => {
+  it('marks an imported session read-only and reports where it came from', async () => {
+    const handler = createSessionStateHandler(hostWith(undefined), await ownershipWithImport())
+    const { res, status, body } = response()
+    await handler(request(`${SCION_SESSION_PATH}?session=session-other-machine`), res)
+
+    expect(status()).toBe(200)
+    expect(JSON.parse(body())).toMatchObject({
+      sessionId: 'session-other-machine',
+      readOnly: true,
+      sourceRoot: '/home/alice/project/repo',
+      scionRoot: rootReal,
+      eventCount: 9,
+    })
+  })
+
+  it('reports a locally owned session as writable, and rejects malformed requests', async () => {
+    const handler = createSessionStateHandler(hostWith(undefined), await ownershipWithImport())
+
+    const local = response()
+    await handler(request(`${SCION_SESSION_PATH}?session=session-local`), local.res)
+    expect(local.status()).toBe(200)
+    expect(JSON.parse(local.body())).toMatchObject({ sessionId: 'session-local', readOnly: false })
+
+    const missing = response()
+    await handler(request(SCION_SESSION_PATH), missing.res)
+    expect(missing.status()).toBe(400)
+
+    const wrongMethod = response()
+    await handler(request(`${SCION_SESSION_PATH}?session=session-local`, 'POST'), wrongMethod.res)
+    expect(wrongMethod.status()).toBe(405)
+
+    const bare = createSessionStateHandler(
+      { sessionPersistence: ctx.sessionPersistence, get: () => undefined } as unknown as Context,
+      await ownership(),
+    )
+    const unauthenticated = response()
+    await bare(request(`${SCION_SESSION_PATH}?session=session-local`), unauthenticated.res)
+    expect(unauthenticated.status()).toBe(403)
+  })
+})
+
+describe('the imports route handler', () => {
+  it('lists every import for the sidebar mark', async () => {
+    const handler = createImportsHandler(hostWith(undefined), await ownershipWithImport())
+    const { res, status, body } = response()
+    await handler(request(SCION_IMPORTS_PATH), res)
+
+    expect(status()).toBe(200)
+    const payload = JSON.parse(body()) as {
+      generatedAt: string
+      imports: Record<string, { sourceRoot: string; eventCount: number }>
+    }
+    expect(Object.keys(payload.imports)).toEqual(['session-other-machine'])
+    expect(payload.imports['session-other-machine']).toMatchObject({
+      sourceRoot: '/home/alice/project/repo',
+      eventCount: 9,
+    })
+    expect(typeof payload.generatedAt).toBe('string')
+  })
+
+  it('answers an empty map, and admits only authorized GETs', async () => {
+    const handler = createImportsHandler(hostWith(undefined), await ownership())
+
+    const ok = response()
+    await handler(request(SCION_IMPORTS_PATH), ok.res)
+    expect(JSON.parse(ok.body())).toMatchObject({ imports: {} })
+
+    const wrongMethod = response()
+    await handler(request(SCION_IMPORTS_PATH, 'POST'), wrongMethod.res)
+    expect(wrongMethod.status()).toBe(405)
+
+    const rejected = createImportsHandler(hostWith(403), await ownership())
+    const denied = response()
+    await rejected(request(SCION_IMPORTS_PATH), denied.res)
+    expect(denied.status()).toBe(403)
   })
 })

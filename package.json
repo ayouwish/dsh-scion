@@ -1,7 +1,7 @@
 {
   "name": "@asyouwish/dsh-scion",
   "description": "Scion: portable workspace+session units carried by git. Export selected local sessions into a git repo, import foreign ones read-only, and continue by forking.",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",

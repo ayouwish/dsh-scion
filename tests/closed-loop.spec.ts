@@ -6,7 +6,7 @@
  * imports it into a different absolute root and must end up with a read-only
  * copy whose history matches and whose working directory is localized.
  */
-import { cp, mkdir, mkdtemp, readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, open, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -24,7 +24,7 @@ import { importSessions } from '../src/import.ts'
 import { ScionOwnershipStore } from '../src/ownership.ts'
 import { createManifest, readManifest, readRepoSession, writeManifest } from '../src/manifest.ts'
 import { locateSessionDir } from '../src/locate.ts'
-import { removeTree } from '../src/fs-util.ts'
+import { removeTree, SESSION_LOCK_FILENAME } from '../src/fs-util.ts'
 
 const SESSION_ID = 'session-scion-e2e'
 
@@ -200,15 +200,23 @@ describe('scion closed loop across two machines', () => {
     expect(stored.header.parentSession).toBeUndefined()
     expect(stored.events).toEqual(baseEvents())
 
-    // Ownership is recorded, and the copy is read-only on disk.
+    // Ownership is recorded. Everything is unwritable — the directory included,
+    // so a rename-based log rewrite cannot land — except the persistence lease
+    // file, which DSH must be able to open for writing to attach the session.
     expect(ownershipB.isImported(SESSION_ID)).toBe(true)
     expect(ownershipB.get(SESSION_ID)?.sourceRoot).toBe(root)
     const directory = await locateSessionDir(rootB, SESSION_ID)
     expect(directory).toBeDefined()
     expect((await stat(directory!)).mode & 0o222).toBe(0)
+    const writableEntries: string[] = []
     for (const entry of await readdir(directory!)) {
-      expect((await stat(join(directory!, entry))).mode & 0o222).toBe(0)
+      if (entry === SESSION_LOCK_FILENAME) continue
+      if (((await stat(join(directory!, entry))).mode & 0o222) !== 0) writableEntries.push(entry)
     }
+    expect(writableEntries).toEqual([])
+    // Exactly the call the persistence lease makes on every attach.
+    const lease = await open(join(directory!, SESSION_LOCK_FILENAME), 'w')
+    await lease.close()
 
     // Re-import is a no-op.
     const again = await importSessions(ctxB, { root: rootB, ownership: ownershipB })
@@ -233,11 +241,32 @@ describe('scion closed loop across two machines', () => {
     const after = await readLog(ctxB, SESSION_ID)
     expect(after.events).toHaveLength(8)
     expect(after.events.at(-1)).toMatchObject({ type: 'turn/end', seq: 7 })
-    // The read-only layer is re-applied after the append.
-    expect((await stat((await locateSessionDir(rootB, SESSION_ID))!)).mode & 0o222).toBe(0)
+    // The read-only layer is re-applied after the append: every session entry is
+    // unwritable again, the lease file alone staying usable.
+    const directoryAfter = (await locateSessionDir(rootB, SESSION_ID))!
+    expect((await stat(directoryAfter)).mode & 0o222).toBe(0)
+    const sessionFiles = (await readdir(directoryAfter)).filter(entry => entry !== SESSION_LOCK_FILENAME)
+    expect(sessionFiles.length).toBeGreaterThan(0)
+    const stillWritable: string[] = []
+    for (const entry of sessionFiles) {
+      if (((await stat(join(directoryAfter, entry))).mode & 0o222) !== 0) stillWritable.push(entry)
+    }
+    expect(stillWritable).toEqual([])
 
-    // A write open on the imported copy is refused by the filesystem layer.
-    await expect(ctxB.sessionPersistence.open(SessionId(SESSION_ID), 'write')).rejects.toThrow()
+    // The persistence lease must work: that is how DSH attaches the session and
+    // checkpoints the projections session lists read their titles from.
+    const writable = await ctxB.sessionPersistence.open(SessionId(SESSION_ID), 'write')
+    try {
+      const before = await readLog(ctxB, SESSION_ID)
+      // Writing is still refused by the immutable log and directory, so the
+      // read-only layer keeps its guarantee exactly where it matters.
+      await expect(writable.append([
+        { type: 'turn/start', seq: before.events.length, time: Date.now(), data: { turn: 9 } } as never,
+      ])).rejects.toThrow(/EACCES/u)
+      expect((await readLog(ctxB, SESSION_ID)).events).toHaveLength(before.events.length)
+    } finally {
+      await writable.close()
+    }
   })
 
   it('never overwrites a local session that shares the id', async () => {
