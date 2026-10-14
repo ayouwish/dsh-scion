@@ -30,6 +30,7 @@ import type { CommandInvocation, CommandResult } from '@deepseek-ai/dsh-commands
 import { ScionOwnershipStore } from './ownership.ts'
 import { installReadOnlyGate } from './readonly.ts'
 import { ScionService } from './service.ts'
+import { installTreeRoute } from './route.ts'
 
 export * from './types.ts'
 export * from './commands.ts'
@@ -41,6 +42,9 @@ export { ScionGitError, commitAll, headCommit, initRepo, isDirty, isGitWorkTree,
 export { exportSessions, listCandidateSessions, listLocalSessions, scopeToWorkspace } from './export.ts'
 export { ScionImportRefusal, importSessions, planImport } from './import.ts'
 export { planPrune, pruneSessions } from './prune.ts'
+export { buildScionTree } from './tree.ts'
+export type { ScionTreeMachine, ScionTreeSession, ScionTreeSnapshot } from './tree.ts'
+export { SCION_TREE_PATH, createTreeHandler, installTreeRoute } from './route.ts'
 export { SCION_JOB_KIND, startScionJob } from './jobs.ts'
 export type { ScionJob } from './jobs.ts'
 export { installReadOnlyGate, isReadOnlySession } from './readonly.ts'
@@ -114,6 +118,8 @@ export async function apply(ctx: Context, config?: Config): Promise<void> {
   await ownership.load()
 
   if (resolved.readonlyGate) installReadOnlyGate(ctx, ownership)
+
+  installTreeRoute(ctx, ownership)
 
   const service = new ScionService(ctx, ownership)
   ctx.inject(['commands'], commandCtx => {

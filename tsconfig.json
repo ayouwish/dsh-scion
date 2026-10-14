@@ -32,6 +32,7 @@
   ],
   "exclude": [
     "lib",
-    "lib/types"
+    "lib/types",
+    "src/client"
   ]
 }

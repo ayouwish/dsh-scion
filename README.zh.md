@@ -46,6 +46,33 @@ scion 根 = 发起命令的 session 的工作目录，所以命令总是作用�
 内收到通知（需要时用 `job_output <id>` 读取）。没有 job registry（未组合 `dsh-jobs`，或没有
 controller 服务该 agent）时，同一份工作同步执行，输出就是命令文本。
 
+### Web 面板：这个仓库带了哪些 session、来自哪台机器
+
+会话头部会多一个 **Scion** 动作，点开就是当前 workspace 仓库的树：
+
+```
+scion dsh-stories                     master → origin/master · clean
+origin https://***@example.com/team/dsh-scion.git
+repo 147 session(s) · 394.0 MiB · local 147 cwd-matching, 32 exportable, readonly 6
+▾ …/project/dsh-stories   32 session(s)
+  └ 8f3c…  344 events  10-11 21:55  12.3 KiB   本机·可导出
+▾ /home/alice/project/dsh-stories   115 session(s)
+  └ 02b1…  340 events  10-10 09:12  8.1 MiB    只读导入
+```
+
+导出的 session 按**导出它的那台机器**分组（manifest 里的 `originRoot`），每行给出事件数、
+导出时间、仓库文件大小，以及本机身份：workspace 内可导出 / 只读导入 / 都不是。顶部一行重复
+分支、upstream 与导出、只读计数。
+
+客户端这一侧只是传输：面板直接 `fetch('/api/scion/tree?session=<id>')`（host 路由会解析该
+session 的 cwd，也接受绝对路径 `?root=`），所以**不需要**生成式的 remote contract。该路由和
+其他 Host API 路由一样由浏览器 connection 准入，**拿不到 connection 就 fail-closed**；没有
+浏览器 HTTP 载体的宿主（Electron）不会注册这条路由。
+
+前端产物由 `scripts/build-client.mjs` 构建，用的是 **harness checkout 里的 esbuild** —— 因为
+DSH 的 client 构建预设是仓库内部文件、没有作为包发布。checkout 不在同级目录时用
+`DSH_HARNESS_DIR` 指定；产出的 `lib/client.js` 随 npm 包发布，使用者无需这个构建。
+
 ### 首次发布：remote 与 upstream
 
 仓库地址是交给 scion 的，不用碰命令行 `git`。初始化时给，或之后随时给：
@@ -187,15 +214,16 @@ purge 重建 `node_modules`（非交互时直接以
 - **跨版本拒绝**：仓库里的 session format 版本与本地 writer 不一致时拒绝导入（迁移链只前进不降级）。
 - **`cwd` 之外的耦合**：导入后建议重启一次 dsh，让 workspace 的 canonical 索引重建；
   正常流程下 `attachSession` 会触发懒加载重索引，但「cwd 目录当时还不存在」这类陈旧缓存需要重启。
-- **没有 Web UI**：只有 `/scion` 命令；侧边栏不区分「本机 / 只读导入」。
+- **面板依赖浏览器 HTTP 载体**：Scion 动作读的是 `GET /api/scion/tree`，没有这条路由的宿主
+  （Electron 走 IPC fetch）会显示取数失败而不是树。
 - **导出的是当前有效前缀**：导出正在运行的 session 时读到的是当时的有效前缀（安全，但可能切在 turn 中间）。
 
 ## 开发
 
 ```sh
 pnpm install
-pnpm build      # tsc → lib/
-pnpm test       # 40 个测试
+pnpm build      # tsc → lib/ + 浏览器半（scripts/build-client.mjs）
+pnpm test       # 47 个测试
 pnpm verify     # build + test
 ```
 
@@ -214,6 +242,10 @@ pnpm verify     # build + test
 - `tests/git.spec.ts` —— 仓库状态、首次 push 的 upstream，以及 remote 新增/更新与凭据打码
 - `tests/remote.spec.ts` —— 仓库地址的命令面：`/scion init --remote` 一步到位、`/scion remote`
   的新增/更新/查看，以及不在 git 工作区时的拒绝
+- `tests/tree.spec.ts` —— 面板 host 半（对真实后端 + 真实仓库）：按机器分组、本机/只读/可导出标记、
+  字节合计，以及路由的 200/400/405/403
+- `tests/client-bundle.spec.ts` —— 在 VM 里加载真实产物：closure-factory 注册、externals 走注入的
+  `require`、会话头部动作的注册
 
 ## 模块
 
@@ -226,6 +258,10 @@ pnpm verify     # build + test
 | `src/export.ts` | push：workspace 名下的本地 session → 仓库明文信封 |
 | `src/prune.ts` | prune：删掉 workspace 已不再拥有的仓库 session |
 | `src/jobs.ts` | push/pull/prune 的后台 job 适配（可选 peer：`dsh-jobs`） |
+| `src/tree.ts` | 面板快照：manifest 里的 session 按导出机器分组 |
+| `src/route.ts` | `GET /api/scion/tree`，由浏览器 connection 准入 |
+| `src/client/` | 浏览器半：会话头部的 Scion 面板（slot 注册 + React） |
+| `scripts/build-client.mjs` | 用 harness 的 esbuild 产出 `lib/client.js`（closure factory） |
 | `src/import.ts` | pull：仓库 → 只读本地 session（cwd 本地化、归属记录、权限位） |
 | `src/readonly.ts` | `agent/pre-step` 闸门 |
 | `src/ownership.ts` | 本机归属索引（串行化写入 + 原子替换） |

@@ -1,7 +1,7 @@
 {
   "name": "@asyouwish/dsh-scion",
   "description": "Scion: portable workspace+session units carried by git. Export selected local sessions into a git repo, import foreign ones read-only, and continue by forking.",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
@@ -9,6 +9,9 @@
     ".": {
       "types": "./lib/types/index.d.ts",
       "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
     },
     "./package.json": "./package.json"
   },
@@ -19,6 +22,12 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-slots"
+      ],
+      "platform": "web"
     }
   },
   "license": "MIT",
@@ -30,8 +39,9 @@
     "url": "git+https://github.com/ayouwish/dsh-scion.git"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "prepare": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node scripts/build-client.mjs",
+    "build:client": "node scripts/build-client.mjs",
+    "prepare": "tsc -p tsconfig.json && node scripts/build-client.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "verify": "pnpm build && pnpm test"

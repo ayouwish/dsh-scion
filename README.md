@@ -58,6 +58,40 @@ a notice (`job_output <id>` reads it on demand). Without a job registry — no
 `dsh-jobs` composed, or no controller serving the agent — the same work runs
 synchronously and its output becomes the command text.
 
+### Web panel: what the repo carries, and from which machines
+
+The session header gets a **Scion** action. It opens a tree of the current
+workspace's repository:
+
+```
+scion dsh-stories                     master → origin/master · clean
+origin https://***@example.com/team/dsh-scion.git
+repo 147 session(s) · 394.0 MiB · local 147 cwd-matching, 32 exportable, readonly 6
+▾ …/project/dsh-stories   32 session(s)
+  └ 8f3c…  344 events  10-11 21:55  12.3 KiB   本机·可导出
+▾ /home/alice/project/dsh-stories   115 session(s)
+  └ 02b1…  340 events  10-10 09:12  8.1 MiB    只读导入
+```
+
+Exported sessions are grouped by the **machine that exported them**
+(`originRoot` in the manifest), and each row carries its event count, export
+time, repo size, and whether this machine holds it as local workspace work, as a
+read-only import, or as neither. The header line repeats the branch/upstream and
+the export/read-only counts.
+
+The panel is pure transport on the client side: it fetches
+`GET /api/scion/tree?session=<id>` (the host route resolves that session's cwd,
+or takes an absolute `?root=`), so no generated remote contract is involved. The
+route is admitted by the browser connection like every other Host API route and
+**fails closed** when no connection authorizes it; hosts without the browser
+HTTP carrier (Electron) simply register no route.
+
+The browser half is built by `scripts/build-client.mjs`, which uses the
+**harness checkout's esbuild** because DSH's client build preset is
+repository-internal rather than a published package. Set `DSH_HARNESS_DIR` when
+the checkout is not a sibling of this package; the built artifact
+(`lib/client.js`) ships in the npm tarball, so consumers never run that build.
+
 ### First publish: remote and upstream
 
 The repository URL is given to scion, not to a shell — nothing here needs the
@@ -222,8 +256,9 @@ Verify with `/scion status`: it prints `branch`, `remote`, `upstream`,
   pruning is never automatic — export alone never deletes.
 - **Subagent child sessions are not exported by default**: they are not on the
   workspace record; select one explicitly with `/scion push --sessions <id>`.
-- **No Web UI**: only the `/scion` command; the sidebar does not distinguish
-  local from read-only imported sessions.
+- **The panel needs the browser HTTP carrier**: the Scion action reads
+  `GET /api/scion/tree`, so a host without that route (Electron's IPC-based
+  fetch) shows the fetch error instead of the tree.
 - **Exports capture the current valid prefix**: exporting a running session
   reads its valid prefix, which may cut mid-turn.
 
@@ -231,8 +266,8 @@ Verify with `/scion status`: it prints `branch`, `remote`, `upstream`,
 
 ```sh
 pnpm install
-pnpm build      # tsc → lib/
-pnpm test       # 40 tests
+pnpm build      # tsc → lib/ + the browser half (scripts/build-client.mjs)
+pnpm test       # 47 tests
 pnpm verify     # build + test
 ```
 
@@ -262,6 +297,12 @@ Tests come in three tiers:
   cancel-to-kill, failure settlement, no-registry fallback) and the service
   routes: `push` submits a job when a registry is composed and runs
   synchronously when it is not.
+- `tests/tree.spec.ts` — the panel's host half against the real backend and a
+  real repository: machine grouping, local/read-only/exportable flags, byte
+  totals, and the route's 200/400/405/403 outcomes.
+- `tests/client-bundle.spec.ts` — the built browser half loaded in a VM:
+  closure-factory registration, externals through the injected `require`, and
+  the session-header action registration.
 
 ## Modules
 
@@ -274,6 +315,10 @@ Tests come in three tiers:
 | `src/export.ts` | push: workspace-owned local sessions → plaintext repo envelopes |
 | `src/prune.ts` | prune: drop repo sessions the workspace no longer owns |
 | `src/jobs.ts` | background-job adapter for push/pull/prune (optional `dsh-jobs` peer) |
+| `src/tree.ts` | the panel snapshot: manifest sessions grouped by exporting machine |
+| `src/route.ts` | `GET /api/scion/tree`, admitted by the browser connection |
+| `src/client/` | browser half: the session-header Scion panel (slot registration + React) |
+| `scripts/build-client.mjs` | builds `lib/client.js` (closure factory) with the harness's esbuild |
 | `src/import.ts` | pull: repo → read-only local sessions (cwd localization, ownership, mode bits) |
 | `src/readonly.ts` | `agent/pre-step` gate |
 | `src/ownership.ts` | Machine-local ownership index (serialized writes, atomic replace) |
